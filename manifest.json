@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-auto-commit",
+  "name": "Auto Commit",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Commits and pushes the vault after N minutes of inactivity.",
+  "author": "Victor Otávio",
+  "authorUrl": "https://ferreira.id",
+  "isDesktopOnly": true
+}
