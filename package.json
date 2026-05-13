@@ -1,6 +1,6 @@
 {
   "name": "@vctrtvfrrr/obsidian-auto-commit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Commits and pushes the vault after N minutes of inactivity.",
   "main": "main.js",
   "scripts": {
