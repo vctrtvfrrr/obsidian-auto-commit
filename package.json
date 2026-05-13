@@ -2,27 +2,27 @@
   "name": "@vctrtvfrrr/obsidian-auto-commit",
   "version": "1.0.2",
   "description": "Commits and pushes the vault after N minutes of inactivity.",
-  "main": "main.js",
-  "scripts": {
-    "dev": "node esbuild.config.mjs",
-    "build": "node esbuild.config.mjs production",
-    "typecheck": "tsc --noEmit"
+  "keywords": [],
+  "license": "MIT",
+  "publishConfig": {
+    "registry": "https://git.codelab.tec.br/api/packages/vctrtvfrrr/npm/"
   },
+  "main": "main.js",
   "files": [
     "manifest.json",
     "main.js",
     "styles.css"
   ],
-  "publishConfig": {
-    "registry": "https://git.codelab.tec.br/api/packages/vctrtvfrrr/npm/"
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.19.39",
+    "@types/node": "^25",
     "builtin-modules": "^3.3.0",
-    "esbuild": "^0.21.0",
+    "esbuild": "^0.28.0",
     "obsidian": "latest",
-    "typescript": "^5.0.0"
+    "typescript": "^6"
   }
 }

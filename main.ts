@@ -265,14 +265,14 @@ export default class AutoCommitPlugin extends Plugin {
         max_tokens: 100,
         temperature: 0.2,
         system:
-          "Você gera mensagens de commit Git em português brasileiro, no modo imperativo, " +
-          "para um vault pessoal do Obsidian. Regras:\n" +
-          "- Uma única linha de até 72 caracteres.\n" +
-          "- Sem prefixos convencionais (nada de \"feat:\", \"docs:\", etc).\n" +
-          "- Descreva o que mudou de forma concreta, citando arquivos ou áreas quando útil.\n" +
-          "- Se houver muitas mudanças heterogêneas, resuma o tema dominante.\n" +
-          "- Não use aspas, crases, nem caracteres especiais. Apenas a mensagem, sem prefixos " +
-          "como \"Mensagem:\" nem texto explicativo.",
+          "You generate commit messages in English (US), in imperative mode, for a vault in Obsidian. Rules:\n" +
+          "- A single line of up to 72 characters.\n" +
+          "- No conventional prefixes (no \"feat:\", \"docs:\", etc.).\n" +
+          "- Describe what changed concretely, citing files or areas when useful.\n" +
+          "- If there are many heterogeneous changes, summarize the dominant theme.\n" +
+          "- Any changes to the `.obsidian/` directory should not be detailed, only mentioned.\n" +
+          "- Do not use quotation marks, backticks, or special characters. Just the message, without prefixes " +
+          "like \"Message:\" or explanatory text.",
         messages: [{ role: "user", content: diff }],
       }),
       throw: false,
