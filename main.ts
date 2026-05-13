@@ -8,7 +8,9 @@ import {
   Notice,
   Plugin,
   PluginSettingTab,
+  RequestUrlParam,
   Setting,
+  requestUrl,
 } from "obsidian";
 
 const execFileP = promisify(execFile);
@@ -250,44 +252,43 @@ export default class AutoCommitPlugin extends Plugin {
   }
 
   private async generateCommitMessage(diff: string): Promise<string> {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 60_000);
+    const req: RequestUrlParam = {
+      url: "https://api.anthropic.com/v1/messages",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.settings.anthropicApiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 100,
+        temperature: 0.2,
+        system:
+          "Você gera mensagens de commit Git em português brasileiro, no modo imperativo, " +
+          "para um vault pessoal do Obsidian. Regras:\n" +
+          "- Uma única linha de até 72 caracteres.\n" +
+          "- Sem prefixos convencionais (nada de \"feat:\", \"docs:\", etc).\n" +
+          "- Descreva o que mudou de forma concreta, citando arquivos ou áreas quando útil.\n" +
+          "- Se houver muitas mudanças heterogêneas, resuma o tema dominante.\n" +
+          "- Não use aspas, crases, nem caracteres especiais. Apenas a mensagem, sem prefixos " +
+          "como \"Mensagem:\" nem texto explicativo.",
+        messages: [{ role: "user", content: diff }],
+      }),
+      throw: false,
+    };
 
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": this.settings.anthropicApiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 100,
-          temperature: 0.2,
-          system:
-            "Você gera mensagens de commit Git em português brasileiro, no modo imperativo, " +
-            "para um vault pessoal do Obsidian. Regras:\n" +
-            "- Uma única linha de até 72 caracteres.\n" +
-            "- Sem prefixos convencionais (nada de \"feat:\", \"docs:\", etc).\n" +
-            "- Descreva o que mudou de forma concreta, citando arquivos ou áreas quando útil.\n" +
-            "- Se houver muitas mudanças heterogêneas, resuma o tema dominante.\n" +
-            "- Não use aspas, crases, nem caracteres especiais. Apenas a mensagem, sem prefixos " +
-            "como \"Mensagem:\" nem texto explicativo.",
-          messages: [{ role: "user", content: diff }],
-        }),
-      });
+    const timeout = new Promise<never>((_, reject) =>
+      window.setTimeout(() => reject(new Error("timeout")), 60_000)
+    );
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+    const res = await Promise.race([requestUrl(req), timeout]);
 
-      const data = await res.json();
-      return (data.content[0].text as string).trim();
-    } finally {
-      window.clearTimeout(timeoutId);
+    if (res.status >= 400) {
+      throw new Error(`HTTP ${res.status}`);
     }
+
+    return (res.json.content[0].text as string).trim();
   }
 
   async loadSettings() {
