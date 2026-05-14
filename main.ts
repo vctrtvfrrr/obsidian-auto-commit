@@ -47,6 +47,36 @@ export default class AutoCommitPlugin extends Plugin {
   settings: AutoCommitSettings = { ...DEFAULT_SETTINGS };
   private timer: number | null = null;
   private isRunning = false;
+  private statusBarItem: HTMLElement | null = null;
+
+  private formatTimeHm(): string {
+    const d = new Date();
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    return `${h}:${m}`;
+  }
+
+  private setStatusIdle(): void {
+    this.statusBarItem?.setText("Auto-commit: idle");
+  }
+
+  private setStatusSyncing(): void {
+    this.statusBarItem?.setText("Auto-commit: syncing...");
+  }
+
+  private setStatusOk(): void {
+    this.statusBarItem?.setText(`Auto-commit: OK ${this.formatTimeHm()}`);
+  }
+
+  private setStatusFailed(): void {
+    this.statusBarItem?.setText(`Auto-commit: failed ${this.formatTimeHm()}`);
+  }
+
+  private setStatusNoChanges(): void {
+    this.statusBarItem?.setText(
+      `Auto-commit: no changes ${this.formatTimeHm()}`
+    );
+  }
 
   async onload() {
     await this.loadSettings();
@@ -62,6 +92,9 @@ export default class AutoCommitPlugin extends Plugin {
       );
       return;
     }
+
+    this.statusBarItem = this.addStatusBarItem();
+    this.setStatusIdle();
 
     // Register vault change listeners
     this.registerEvent(this.app.vault.on("modify", () => this.resetTimer()));
@@ -115,8 +148,12 @@ export default class AutoCommitPlugin extends Plugin {
   private async runCommit() {
     if (this.isRunning) return;
     this.isRunning = true;
+    this.setStatusSyncing();
     try {
       await this.doCommit();
+    } catch (err) {
+      this.setStatusFailed();
+      console.error("Auto-commit: unexpected error:", err);
     } finally {
       this.isRunning = false;
     }
@@ -135,6 +172,7 @@ export default class AutoCommitPlugin extends Plugin {
     for (const f of specialStateFiles) {
       if (existsSync(join(cwd, f))) {
         console.info(`Auto-commit: skipped — repo in special state (${f})`);
+        this.setStatusFailed();
         return;
       }
     }
@@ -143,6 +181,7 @@ export default class AutoCommitPlugin extends Plugin {
       existsSync(join(cwd, ".git/rebase-apply"))
     ) {
       console.info("Auto-commit: skipped — rebase in progress");
+      this.setStatusFailed();
       return;
     }
 
@@ -151,16 +190,27 @@ export default class AutoCommitPlugin extends Plugin {
       await execFileP("git", ["symbolic-ref", "-q", "HEAD"], { cwd });
     } catch {
       console.info("Auto-commit: skipped — detached HEAD");
+      this.setStatusFailed();
       return;
     }
 
     // Guard: no changes
-    const { stdout: statusOut } = await execFileP(
-      "git",
-      ["status", "--porcelain"],
-      { cwd }
-    );
-    if (!statusOut.trim()) return;
+    let statusOut: string;
+    try {
+      const { stdout } = await execFileP(
+        "git",
+        ["status", "--porcelain"],
+        { cwd }
+      );
+      statusOut = stdout;
+    } catch {
+      this.setStatusFailed();
+      return;
+    }
+    if (!statusOut.trim()) {
+      this.setStatusNoChanges();
+      return;
+    }
 
     // Stage everything
     await execFileP("git", ["add", "-A"], { cwd });
@@ -178,6 +228,7 @@ export default class AutoCommitPlugin extends Plugin {
         "Auto-commit: diff > 50 KB, requer revisão manual. Resolva via terminal.",
         0
       );
+      this.setStatusFailed();
       return;
     }
 
@@ -191,6 +242,7 @@ export default class AutoCommitPlugin extends Plugin {
         0
       );
       console.error("Auto-commit: AI error:", err);
+      this.setStatusFailed();
       return;
     }
 
@@ -198,7 +250,10 @@ export default class AutoCommitPlugin extends Plugin {
     await execFileP("git", ["commit", "-m", message], { cwd });
 
     // Push
-    if (!this.settings.pushEnabled) return;
+    if (!this.settings.pushEnabled) {
+      this.setStatusOk();
+      return;
+    }
 
     const remote = this.settings.remote;
     const effectiveBranch =
@@ -230,6 +285,7 @@ export default class AutoCommitPlugin extends Plugin {
             "Auto-commit: conflito com remoto. Rebase abortado. Resolva manualmente.",
             0
           );
+          this.setStatusFailed();
           return;
         }
       }
@@ -242,12 +298,14 @@ export default class AutoCommitPlugin extends Plugin {
         ? ["push", remote, effectiveBranch]
         : ["push", remote, "HEAD"];
       await execFileP("git", pushArgs, { cwd });
+      this.setStatusOk();
     } catch (err) {
       new Notice(
         "Auto-commit: push falhou. Commit local feito mas não enviado. Verifique credenciais/rede.",
         0
       );
       console.error("Auto-commit: push error:", err);
+      this.setStatusFailed();
     }
   }
 
