@@ -41,6 +41,41 @@ const obfuscate = (cfg: AutoCommitSettings): string =>
 const deobfuscate = (s: string): AutoCommitSettings =>
   JSON.parse(atob(rev(s)));
 
+// ---------- Tooltip catalog ----------
+
+const TOOLTIPS = {
+  idle: "Ready. Sync runs after the inactivity interval or via the Run now command.",
+  syncing: "Syncing the repository…",
+  noChanges: "No pending changes to commit.",
+  okWithPush: "Commit created and changes pushed to the remote successfully.",
+  okNoPush:
+    "Commit created in the local repository only. Auto-push is disabled in settings.",
+  failedUnexpected: "An unexpected error occurred. See the console for details.",
+  failedMerge:
+    "A merge is in progress. Complete or abort it manually before auto-sync.",
+  failedCherryPick:
+    "A cherry-pick is in progress. Complete or abort it manually before auto-sync.",
+  failedRevert:
+    "A revert is in progress. Complete or abort it manually before auto-sync.",
+  failedBisect: "A bisect is in progress. Finish or abort it before auto-sync.",
+  failedRebase:
+    "A rebase is in progress. Complete or abort it manually before auto-sync.",
+  failedDetached:
+    "The repository is in detached HEAD state. Check out a branch before auto-sync.",
+  failedDiffTooLarge:
+    "The diff exceeded the 50 KB limit. Review and commit manually.",
+  failedAi:
+    "Could not generate the commit message with AI. Changes remain staged.",
+  failedRebaseConflict:
+    "Conflict while updating from remote; rebase was aborted. Resolve manually.",
+  failedPush:
+    "Push failed after local commit. Check credentials, network, and remote permissions.",
+  failedGitStatus:
+    "Could not check repository status with Git. See the console for details.",
+} as const;
+
+type TooltipKey = keyof typeof TOOLTIPS;
+
 // ---------- Plugin ----------
 
 export default class AutoCommitPlugin extends Plugin {
@@ -56,26 +91,33 @@ export default class AutoCommitPlugin extends Plugin {
     return `${h}:${m}`;
   }
 
+  private updateStatus(label: string, tooltipKey: TooltipKey): void {
+    if (!this.statusBarItem) return;
+    this.statusBarItem.setText(label);
+    this.statusBarItem.title = TOOLTIPS[tooltipKey];
+  }
+
   private setStatusIdle(): void {
-    this.statusBarItem?.setText("Auto-commit: idle");
+    this.updateStatus("Auto-commit: idle", "idle");
   }
 
   private setStatusSyncing(): void {
-    this.statusBarItem?.setText("Auto-commit: syncing...");
+    this.updateStatus("Auto-commit: syncing...", "syncing");
   }
 
-  private setStatusOk(): void {
-    this.statusBarItem?.setText(`Auto-commit: OK ${this.formatTimeHm()}`);
+  private setStatusOk(pushed: boolean): void {
+    this.updateStatus(
+      `Auto-commit: OK ${this.formatTimeHm()}`,
+      pushed ? "okWithPush" : "okNoPush"
+    );
   }
 
-  private setStatusFailed(): void {
-    this.statusBarItem?.setText(`Auto-commit: failed ${this.formatTimeHm()}`);
+  private setStatusFailed(tooltipKey: TooltipKey = "failedUnexpected"): void {
+    this.updateStatus(`Auto-commit: failed ${this.formatTimeHm()}`, tooltipKey);
   }
 
   private setStatusNoChanges(): void {
-    this.statusBarItem?.setText(
-      `Auto-commit: no changes ${this.formatTimeHm()}`
-    );
+    this.updateStatus(`Auto-commit: no changes ${this.formatTimeHm()}`, "noChanges");
   }
 
   async onload() {
@@ -163,16 +205,16 @@ export default class AutoCommitPlugin extends Plugin {
     const cwd = this.getVaultPath();
 
     // Guard: special repo state
-    const specialStateFiles = [
-      ".git/MERGE_HEAD",
-      ".git/CHERRY_PICK_HEAD",
-      ".git/REVERT_HEAD",
-      ".git/BISECT_LOG",
+    const specialStateGuards: [string, TooltipKey][] = [
+      [".git/MERGE_HEAD", "failedMerge"],
+      [".git/CHERRY_PICK_HEAD", "failedCherryPick"],
+      [".git/REVERT_HEAD", "failedRevert"],
+      [".git/BISECT_LOG", "failedBisect"],
     ];
-    for (const f of specialStateFiles) {
+    for (const [f, tooltipKey] of specialStateGuards) {
       if (existsSync(join(cwd, f))) {
         console.info(`Auto-commit: skipped — repo in special state (${f})`);
-        this.setStatusFailed();
+        this.setStatusFailed(tooltipKey);
         return;
       }
     }
@@ -181,7 +223,7 @@ export default class AutoCommitPlugin extends Plugin {
       existsSync(join(cwd, ".git/rebase-apply"))
     ) {
       console.info("Auto-commit: skipped — rebase in progress");
-      this.setStatusFailed();
+      this.setStatusFailed("failedRebase");
       return;
     }
 
@@ -190,7 +232,7 @@ export default class AutoCommitPlugin extends Plugin {
       await execFileP("git", ["symbolic-ref", "-q", "HEAD"], { cwd });
     } catch {
       console.info("Auto-commit: skipped — detached HEAD");
-      this.setStatusFailed();
+      this.setStatusFailed("failedDetached");
       return;
     }
 
@@ -204,7 +246,7 @@ export default class AutoCommitPlugin extends Plugin {
       );
       statusOut = stdout;
     } catch {
-      this.setStatusFailed();
+      this.setStatusFailed("failedGitStatus");
       return;
     }
     if (!statusOut.trim()) {
@@ -228,7 +270,7 @@ export default class AutoCommitPlugin extends Plugin {
         "Auto-commit: diff > 50 KB, requer revisão manual. Resolva via terminal.",
         0
       );
-      this.setStatusFailed();
+      this.setStatusFailed("failedDiffTooLarge");
       return;
     }
 
@@ -242,7 +284,7 @@ export default class AutoCommitPlugin extends Plugin {
         0
       );
       console.error("Auto-commit: AI error:", err);
-      this.setStatusFailed();
+      this.setStatusFailed("failedAi");
       return;
     }
 
@@ -251,7 +293,7 @@ export default class AutoCommitPlugin extends Plugin {
 
     // Push
     if (!this.settings.pushEnabled) {
-      this.setStatusOk();
+      this.setStatusOk(false);
       return;
     }
 
@@ -285,7 +327,7 @@ export default class AutoCommitPlugin extends Plugin {
             "Auto-commit: conflito com remoto. Rebase abortado. Resolva manualmente.",
             0
           );
-          this.setStatusFailed();
+          this.setStatusFailed("failedRebaseConflict");
           return;
         }
       }
@@ -298,14 +340,14 @@ export default class AutoCommitPlugin extends Plugin {
         ? ["push", remote, effectiveBranch]
         : ["push", remote, "HEAD"];
       await execFileP("git", pushArgs, { cwd });
-      this.setStatusOk();
+      this.setStatusOk(true);
     } catch (err) {
       new Notice(
         "Auto-commit: push falhou. Commit local feito mas não enviado. Verifique credenciais/rede.",
         0
       );
       console.error("Auto-commit: push error:", err);
-      this.setStatusFailed();
+      this.setStatusFailed("failedPush");
     }
   }
 
