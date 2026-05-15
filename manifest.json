@@ -6,5 +6,5 @@
   "description": "Commits and pushes the vault after N minutes of inactivity.",
   "author": "Victor Otávio Ferreira",
   "authorUrl": "https://victorotavio.com.br",
-  "isDesktopOnly": true
+  "isDesktopOnly": false
 }

@@ -4,6 +4,7 @@ import {
   App,
   FileSystemAdapter,
   Notice,
+  Platform,
   Plugin,
   PluginSettingTab,
   Setting,
@@ -64,6 +65,8 @@ export default class AutoCommitPlugin extends Plugin {
   }
 
   async onload() {
+    if (Platform.isMobile) return;
+
     await this.loadSettings();
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));
 

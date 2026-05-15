@@ -246,6 +246,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     this.updateStatus(`Auto-commit: no changes ${this.formatTimeHm()}`, "noChanges");
   }
   async onload() {
+    if (import_obsidian4.Platform.isMobile) return;
     await this.loadSettings();
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));
     try {
