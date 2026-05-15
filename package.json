@@ -16,7 +16,8 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "version": "jq --arg v \"$npm_new_version\" '.version = $v' manifest.json > manifest.tmp.json && mv manifest.tmp.json manifest.json && git add manifest.json"
   },
   "devDependencies": {
     "@types/node": "^25",
