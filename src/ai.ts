@@ -31,7 +31,9 @@ async function callAnthropicApi(prompt: string, apiKey: string): Promise<string>
     window.setTimeout(() => reject(new Error("timeout")), 60_000)
   );
 
+  console.debug("Auto-commit: calling Anthropic API");
   const res = await Promise.race([requestUrl(req), timeout]);
+  console.debug(`Auto-commit: Anthropic API responded with status ${res.status}`);
 
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
 

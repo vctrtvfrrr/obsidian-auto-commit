@@ -101,6 +101,7 @@ async function checkRepoGuards(cwd) {
     console.info("Auto-commit: skipped \u2014 detached HEAD");
     return { ok: false, reason: "failedDetached" };
   }
+  console.debug("Auto-commit: guards passed");
   return null;
 }
 
@@ -130,7 +131,9 @@ async function callAnthropicApi(prompt, apiKey) {
   const timeout = new Promise(
     (_, reject) => window.setTimeout(() => reject(new Error("timeout")), 6e4)
   );
+  console.debug("Auto-commit: calling Anthropic API");
   const res = await Promise.race([(0, import_obsidian.requestUrl)(req), timeout]);
+  console.debug(`Auto-commit: Anthropic API responded with status ${res.status}`);
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
   return res.json.content[0].text.trim();
 }
@@ -147,13 +150,18 @@ async function createCommit(cwd, apiKey) {
   try {
     const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });
     statusOut = stdout;
-  } catch (e) {
+  } catch (err) {
+    console.error("Auto-commit: git status failed", err);
     return { ok: false, reason: "failedGitStatus" };
   }
   if (!statusOut.trim()) return { ok: "noChanges" };
+  const changedFiles = statusOut.trim().split("\n").length;
+  console.info(`Auto-commit: ${changedFiles} changed file(s), staging`);
   await execFileP("git", ["add", "-A"], { cwd });
   const { stdout: diff } = await execFileP("git", ["diff", "--staged"], { cwd });
+  console.debug(`Auto-commit: staged diff size = ${diff.length} bytes`);
   if (diff.length > 5e4) {
+    console.warn(`Auto-commit: diff too large (${diff.length} bytes), aborting`);
     new import_obsidian2.Notice(
       "Auto-commit: diff exceeds 50 KB. Review and commit manually via terminal.",
       0
@@ -161,8 +169,10 @@ async function createCommit(cwd, apiKey) {
     return { ok: false, reason: "failedDiffTooLarge" };
   }
   let message;
+  console.debug("Auto-commit: requesting commit message from AI");
   try {
     message = await generateCommitMessage(diff, apiKey);
+    console.info(`Auto-commit: AI message \u2014 "${message}"`);
   } catch (err) {
     new import_obsidian2.Notice(
       "Auto-commit: failed to generate commit message (AI unavailable). Changes remain staged.",
@@ -172,6 +182,7 @@ async function createCommit(cwd, apiKey) {
     return { ok: false, reason: "failedAi" };
   }
   await execFileP("git", ["commit", "-m", message], { cwd });
+  console.info("Auto-commit: commit created");
   return null;
 }
 
@@ -182,6 +193,8 @@ async function syncRemote(cwd, remote, branch) {
   const { promisify } = await import("node:util");
   const execFileP = promisify(execFile);
   const effectiveBranch = branch || (await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
+  console.debug(`Auto-commit: syncing to ${remote}/${effectiveBranch}`);
+  console.debug(`Auto-commit: fetching ${remote}`);
   await execFileP("git", ["fetch", remote], { cwd });
   try {
     const { stdout: aheadCount } = await execFileP(
@@ -189,10 +202,14 @@ async function syncRemote(cwd, remote, branch) {
       ["rev-list", `HEAD..${remote}/${effectiveBranch}`, "--count"],
       { cwd }
     );
-    if (parseInt(aheadCount.trim(), 10) > 0) {
+    const count = parseInt(aheadCount.trim(), 10);
+    if (count > 0) {
+      console.info(`Auto-commit: remote is ${count} commit(s) ahead, rebasing`);
       try {
         await execFileP("git", ["pull", "--rebase", remote, effectiveBranch], { cwd });
-      } catch (e) {
+        console.info("Auto-commit: rebase successful");
+      } catch (err) {
+        console.warn("Auto-commit: rebase conflict, aborting", err);
         await execFileP("git", ["rebase", "--abort"], { cwd }).catch(() => {
         });
         new import_obsidian3.Notice(
@@ -201,12 +218,17 @@ async function syncRemote(cwd, remote, branch) {
         );
         return { ok: false, reason: "failedRebaseConflict" };
       }
+    } else {
+      console.debug("Auto-commit: remote is up to date, no rebase needed");
     }
   } catch (e) {
+    console.debug(`Auto-commit: ${remote}/${effectiveBranch} not found, skipping rebase check`);
   }
   try {
     const pushArgs = branch ? ["push", remote, effectiveBranch] : ["push", remote, "HEAD"];
+    console.debug(`Auto-commit: pushing (${pushArgs.join(" ")})`);
     await execFileP("git", pushArgs, { cwd });
+    console.info(`Auto-commit: pushed to ${remote}/${effectiveBranch}`);
     return { ok: true, pushed: true };
   } catch (err) {
     new import_obsidian3.Notice(
@@ -264,15 +286,23 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     this.updateStatus(`Auto-commit: pulled ${this.formatTimeHm()}`, "pulledOk");
   }
   async onload() {
-    if (import_obsidian4.Platform.isMobile) return;
+    if (import_obsidian4.Platform.isMobile) {
+      console.info("Auto-commit: mobile platform detected, plugin disabled");
+      return;
+    }
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     this.execFileP = promisify(execFile);
     await this.loadSettings();
+    console.info(
+      `Auto-commit: loaded \u2014 inactivity=${this.settings.inactivityMinutes}m fetch=${this.settings.fetchIntervalMinutes}m push=${this.settings.pushEnabled} remote=${this.settings.remote} branch=${this.settings.branch || "(current)"}`
+    );
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));
     try {
-      await this.execFileP("git", ["--version"]);
-    } catch (e) {
+      const { stdout } = await this.execFileP("git", ["--version"]);
+      console.info(`Auto-commit: ${stdout.trim()}`);
+    } catch (err) {
+      console.error("Auto-commit: git not found in PATH", err);
       new import_obsidian4.Notice(
         "Auto-commit: 'git' not found in PATH. Check your Git installation.",
         0
@@ -294,11 +324,15 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     const cwd = this.getVaultPath();
     try {
       const { stdout } = await this.execFileP("git", ["status", "--porcelain"], { cwd });
-      if (stdout.trim()) this.runCommit();
+      if (stdout.trim()) {
+        console.info("Auto-commit: orphaned changes detected on load, triggering commit");
+        this.runCommit();
+      }
     } catch (e) {
     }
   }
   onunload() {
+    console.info("Auto-commit: unloading");
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
@@ -313,25 +347,33 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
   }
   resetTimer() {
     if (this.timer !== null) window.clearTimeout(this.timer);
+    console.debug(`Auto-commit: timer reset \u2014 will commit in ${this.settings.inactivityMinutes}m`);
     this.timer = window.setTimeout(
       () => this.runCommit(),
       this.settings.inactivityMinutes * 6e4
     );
   }
   async runCommit() {
-    if (this.isRunning) return;
+    if (this.isRunning) {
+      console.debug("Auto-commit: runCommit skipped \u2014 already running");
+      return;
+    }
     this.isRunning = true;
+    console.info("Auto-commit: commit cycle started");
     this.setStatusSyncing();
     try {
       const result = await this.doCommit();
       switch (result.ok) {
         case true:
+          console.info(`Auto-commit: cycle complete \u2014 pushed=${result.pushed}`);
           this.setStatusOk(result.pushed);
           break;
         case false:
+          console.warn(`Auto-commit: cycle failed \u2014 reason=${result.reason}`);
           this.setStatusFailed(result.reason);
           break;
         case "noChanges":
+          console.info("Auto-commit: cycle complete \u2014 no changes");
           this.setStatusNoChanges();
           break;
       }
@@ -348,7 +390,10 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     if (guardResult !== null) return guardResult;
     const commitResult = await createCommit(cwd, this.settings.anthropicApiKey);
     if (commitResult !== null) return commitResult;
-    if (!this.settings.pushEnabled) return { ok: true, pushed: false };
+    if (!this.settings.pushEnabled) {
+      console.info("Auto-commit: push disabled, skipping remote sync");
+      return { ok: true, pushed: false };
+    }
     return syncRemote(cwd, this.settings.remote, this.settings.branch);
   }
   startFetchInterval() {
@@ -356,7 +401,11 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       window.clearInterval(this.fetchIntervalId);
       this.fetchIntervalId = null;
     }
-    if (this.settings.fetchIntervalMinutes <= 0) return;
+    if (this.settings.fetchIntervalMinutes <= 0) {
+      console.info("Auto-commit: fetch interval disabled");
+      return;
+    }
+    console.info(`Auto-commit: fetch interval set to ${this.settings.fetchIntervalMinutes}m`);
     this.fetchIntervalId = window.setInterval(
       () => this.doFetch(),
       this.settings.fetchIntervalMinutes * 6e4
@@ -366,17 +415,26 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     this.startFetchInterval();
   }
   async doFetch() {
-    if (this.isRunning) return;
+    if (this.isRunning) {
+      console.debug("Auto-commit: fetch skipped \u2014 commit cycle running");
+      return;
+    }
     this.isRunning = true;
+    console.debug("Auto-commit: fetch cycle started");
     try {
       const cwd = this.getVaultPath();
       const guardResult = await checkRepoGuards(cwd);
-      if (guardResult !== null) return;
+      if (guardResult !== null) {
+        console.debug(`Auto-commit: fetch aborted by guard \u2014 ${guardResult.reason}`);
+        return;
+      }
       const remote = this.settings.remote;
       const branch = this.settings.branch || (await this.execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
+      console.debug(`Auto-commit: fetching ${remote}`);
       try {
         await this.execFileP("git", ["fetch", remote], { cwd });
-      } catch (e) {
+      } catch (err) {
+        console.warn("Auto-commit: fetch failed", err);
         return;
       }
       let aheadCount = 0;
@@ -388,20 +446,31 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
         );
         aheadCount = parseInt(stdout.trim(), 10);
       } catch (e) {
+        console.debug(`Auto-commit: remote branch ${remote}/${branch} not found, skipping pull`);
         return;
       }
-      if (aheadCount === 0) return;
+      if (aheadCount === 0) {
+        console.debug("Auto-commit: already up to date");
+        return;
+      }
+      console.info(`Auto-commit: ${aheadCount} new commit(s) on ${remote}/${branch}`);
       const { stdout: porcelain } = await this.execFileP(
         "git",
         ["status", "--porcelain"],
         { cwd }
       );
-      if (porcelain.trim()) return;
+      if (porcelain.trim()) {
+        console.info("Auto-commit: skipping pull \u2014 local uncommitted changes present");
+        return;
+      }
       this.setStatusPulling();
+      console.info(`Auto-commit: merging ${remote}/${branch} (fast-forward only)`);
       try {
         await this.execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        console.info("Auto-commit: pull successful");
         this.setStatusPulledOk();
-      } catch (e) {
+      } catch (err) {
+        console.warn("Auto-commit: fast-forward merge failed", err);
         this.setStatusFailed("failedPullConflict");
       }
     } catch (err) {
@@ -414,6 +483,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     const raw = await this.loadData();
     if (!raw) {
       this.settings = { ...DEFAULT_SETTINGS };
+      console.debug("Auto-commit: no saved settings, using defaults");
       return;
     }
     if (raw.d) {
@@ -421,10 +491,12 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
         this.settings = { ...DEFAULT_SETTINGS, ...deobfuscate(raw.d) };
         return;
       } catch (e) {
+        console.warn("Auto-commit: failed to deserialize settings, using defaults");
         this.settings = { ...DEFAULT_SETTINGS };
         return;
       }
     }
+    console.info("Auto-commit: migrating settings from legacy format");
     this.settings = { ...DEFAULT_SETTINGS, ...raw };
     await this.saveSettings();
   }

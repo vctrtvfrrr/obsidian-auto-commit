@@ -37,5 +37,6 @@ export async function checkRepoGuards(
     return { ok: false, reason: "failedDetached" };
   }
 
+  console.debug("Auto-commit: guards passed");
   return null;
 }

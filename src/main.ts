@@ -77,19 +77,31 @@ export default class AutoCommitPlugin extends Plugin {
   }
 
   async onload() {
-    if (Platform.isMobile) return;
+    if (Platform.isMobile) {
+      console.info("Auto-commit: mobile platform detected, plugin disabled");
+      return;
+    }
 
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     this.execFileP = promisify(execFile) as ExecFileP;
 
     await this.loadSettings();
+    console.info(
+      `Auto-commit: loaded — inactivity=${this.settings.inactivityMinutes}m` +
+      ` fetch=${this.settings.fetchIntervalMinutes}m` +
+      ` push=${this.settings.pushEnabled}` +
+      ` remote=${this.settings.remote}` +
+      ` branch=${this.settings.branch || "(current)"}`
+    );
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));
 
     // Self-check: git must be in PATH
     try {
-      await this.execFileP("git", ["--version"]);
-    } catch {
+      const { stdout } = await this.execFileP("git", ["--version"]);
+      console.info(`Auto-commit: ${stdout.trim()}`);
+    } catch (err) {
+      console.error("Auto-commit: git not found in PATH", err);
       new Notice(
         "Auto-commit: 'git' not found in PATH. Check your Git installation.",
         0
@@ -118,13 +130,17 @@ export default class AutoCommitPlugin extends Plugin {
     const cwd = this.getVaultPath();
     try {
       const { stdout } = await this.execFileP("git", ["status", "--porcelain"], { cwd });
-      if (stdout.trim()) this.runCommit();
+      if (stdout.trim()) {
+        console.info("Auto-commit: orphaned changes detected on load, triggering commit");
+        this.runCommit();
+      }
     } catch {
       // If git status fails here, the commit attempt will handle it
     }
   }
 
   onunload() {
+    console.info("Auto-commit: unloading");
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
@@ -141,6 +157,7 @@ export default class AutoCommitPlugin extends Plugin {
 
   private resetTimer() {
     if (this.timer !== null) window.clearTimeout(this.timer);
+    console.debug(`Auto-commit: timer reset — will commit in ${this.settings.inactivityMinutes}m`);
     this.timer = window.setTimeout(
       () => this.runCommit(),
       this.settings.inactivityMinutes * 60_000
@@ -148,19 +165,26 @@ export default class AutoCommitPlugin extends Plugin {
   }
 
   private async runCommit() {
-    if (this.isRunning) return;
+    if (this.isRunning) {
+      console.debug("Auto-commit: runCommit skipped — already running");
+      return;
+    }
     this.isRunning = true;
+    console.info("Auto-commit: commit cycle started");
     this.setStatusSyncing();
     try {
       const result = await this.doCommit();
       switch (result.ok) {
         case true:
+          console.info(`Auto-commit: cycle complete — pushed=${result.pushed}`);
           this.setStatusOk(result.pushed);
           break;
         case false:
+          console.warn(`Auto-commit: cycle failed — reason=${result.reason}`);
           this.setStatusFailed(result.reason);
           break;
         case "noChanges":
+          console.info("Auto-commit: cycle complete — no changes");
           this.setStatusNoChanges();
           break;
       }
@@ -181,7 +205,10 @@ export default class AutoCommitPlugin extends Plugin {
     const commitResult = await createCommit(cwd, this.settings.anthropicApiKey);
     if (commitResult !== null) return commitResult;
 
-    if (!this.settings.pushEnabled) return { ok: true, pushed: false };
+    if (!this.settings.pushEnabled) {
+      console.info("Auto-commit: push disabled, skipping remote sync");
+      return { ok: true, pushed: false };
+    }
 
     return syncRemote(cwd, this.settings.remote, this.settings.branch);
   }
@@ -191,7 +218,11 @@ export default class AutoCommitPlugin extends Plugin {
       window.clearInterval(this.fetchIntervalId);
       this.fetchIntervalId = null;
     }
-    if (this.settings.fetchIntervalMinutes <= 0) return;
+    if (this.settings.fetchIntervalMinutes <= 0) {
+      console.info("Auto-commit: fetch interval disabled");
+      return;
+    }
+    console.info(`Auto-commit: fetch interval set to ${this.settings.fetchIntervalMinutes}m`);
     this.fetchIntervalId = window.setInterval(
       () => this.doFetch(),
       this.settings.fetchIntervalMinutes * 60_000
@@ -203,13 +234,20 @@ export default class AutoCommitPlugin extends Plugin {
   }
 
   private async doFetch(): Promise<void> {
-    if (this.isRunning) return;
+    if (this.isRunning) {
+      console.debug("Auto-commit: fetch skipped — commit cycle running");
+      return;
+    }
     this.isRunning = true;
+    console.debug("Auto-commit: fetch cycle started");
     try {
       const cwd = this.getVaultPath();
 
       const guardResult = await checkRepoGuards(cwd);
-      if (guardResult !== null) return;
+      if (guardResult !== null) {
+        console.debug(`Auto-commit: fetch aborted by guard — ${guardResult.reason}`);
+        return;
+      }
 
       const remote = this.settings.remote;
       const branch =
@@ -218,9 +256,11 @@ export default class AutoCommitPlugin extends Plugin {
           await this.execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })
         ).stdout.trim();
 
+      console.debug(`Auto-commit: fetching ${remote}`);
       try {
         await this.execFileP("git", ["fetch", remote], { cwd });
-      } catch {
+      } catch (err) {
+        console.warn("Auto-commit: fetch failed", err);
         return;
       }
 
@@ -233,23 +273,36 @@ export default class AutoCommitPlugin extends Plugin {
         );
         aheadCount = parseInt(stdout.trim(), 10);
       } catch {
+        console.debug(`Auto-commit: remote branch ${remote}/${branch} not found, skipping pull`);
         return;
       }
-      if (aheadCount === 0) return;
+
+      if (aheadCount === 0) {
+        console.debug("Auto-commit: already up to date");
+        return;
+      }
+
+      console.info(`Auto-commit: ${aheadCount} new commit(s) on ${remote}/${branch}`);
 
       const { stdout: porcelain } = await this.execFileP(
         "git",
         ["status", "--porcelain"],
         { cwd }
       );
-      if (porcelain.trim()) return;
+      if (porcelain.trim()) {
+        console.info("Auto-commit: skipping pull — local uncommitted changes present");
+        return;
+      }
 
       this.setStatusPulling();
+      console.info(`Auto-commit: merging ${remote}/${branch} (fast-forward only)`);
 
       try {
         await this.execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        console.info("Auto-commit: pull successful");
         this.setStatusPulledOk();
-      } catch {
+      } catch (err) {
+        console.warn("Auto-commit: fast-forward merge failed", err);
         this.setStatusFailed("failedPullConflict");
       }
     } catch (err) {
@@ -263,6 +316,7 @@ export default class AutoCommitPlugin extends Plugin {
     const raw = await this.loadData();
     if (!raw) {
       this.settings = { ...DEFAULT_SETTINGS };
+      console.debug("Auto-commit: no saved settings, using defaults");
       return;
     }
     if (raw.d) {
@@ -270,11 +324,13 @@ export default class AutoCommitPlugin extends Plugin {
         this.settings = { ...DEFAULT_SETTINGS, ...deobfuscate(raw.d) };
         return;
       } catch {
+        console.warn("Auto-commit: failed to deserialize settings, using defaults");
         this.settings = { ...DEFAULT_SETTINGS };
         return;
       }
     }
     // Migration: raw fields from old format
+    console.info("Auto-commit: migrating settings from legacy format");
     this.settings = { ...DEFAULT_SETTINGS, ...raw };
     await this.saveSettings();
   }
