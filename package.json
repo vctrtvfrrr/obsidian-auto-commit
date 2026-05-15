@@ -1,6 +1,6 @@
 {
   "name": "@vctrtvfrrr/obsidian-auto-commit",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Commits and pushes the vault after N minutes of inactivity.",
   "keywords": [],
   "license": "MIT",
