@@ -10,10 +10,10 @@ const SPECIAL_STATE_GUARDS: [string, TooltipKey][] = [
 export async function checkRepoGuards(
   cwd: string
 ): Promise<{ ok: false; reason: TooltipKey } | null> {
-  const { existsSync } = require("node:fs") as typeof import("node:fs");
-  const { join } = require("node:path") as typeof import("node:path");
-  const { execFile } = require("node:child_process") as typeof import("node:child_process");
-  const { promisify } = require("node:util") as typeof import("node:util");
+  const { existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
   const execFileP = promisify(execFile);
   for (const [f, reason] of SPECIAL_STATE_GUARDS) {
     if (existsSync(join(cwd, f))) {

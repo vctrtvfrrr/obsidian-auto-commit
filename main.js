@@ -1,7 +1,9 @@
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -15,6 +17,14 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/main.ts
@@ -70,10 +80,10 @@ var SPECIAL_STATE_GUARDS = [
   [".git/BISECT_LOG", "failedBisect"]
 ];
 async function checkRepoGuards(cwd) {
-  const { existsSync } = require("node:fs");
-  const { join } = require("node:path");
-  const { execFile } = require("node:child_process");
-  const { promisify } = require("node:util");
+  const { existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
   const execFileP = promisify(execFile);
   for (const [f, reason] of SPECIAL_STATE_GUARDS) {
     if (existsSync(join(cwd, f))) {
@@ -130,8 +140,8 @@ async function generateCommitMessage(diff, apiKey) {
 
 // src/commit.ts
 async function createCommit(cwd, apiKey) {
-  const { execFile } = require("node:child_process");
-  const { promisify } = require("node:util");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
   const execFileP = promisify(execFile);
   let statusOut;
   try {
@@ -168,8 +178,8 @@ async function createCommit(cwd, apiKey) {
 // src/remote.ts
 var import_obsidian3 = require("obsidian");
 async function syncRemote(cwd, remote, branch) {
-  const { execFile } = require("node:child_process");
-  const { promisify } = require("node:util");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
   const execFileP = promisify(execFile);
   const effectiveBranch = branch || (await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
   await execFileP("git", ["fetch", remote], { cwd });
@@ -255,8 +265,8 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
   }
   async onload() {
     if (import_obsidian4.Platform.isMobile) return;
-    const { execFile } = require("node:child_process");
-    const { promisify } = require("node:util");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
     this.execFileP = promisify(execFile);
     await this.loadSettings();
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));

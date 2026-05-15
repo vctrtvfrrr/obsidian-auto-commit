@@ -6,8 +6,8 @@ export async function createCommit(
   cwd: string,
   apiKey: string
 ): Promise<{ ok: false; reason: TooltipKey } | { ok: "noChanges" } | null> {
-  const { execFile } = require("node:child_process") as typeof import("node:child_process");
-  const { promisify } = require("node:util") as typeof import("node:util");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
   const execFileP = promisify(execFile);
   let statusOut: string;
   try {

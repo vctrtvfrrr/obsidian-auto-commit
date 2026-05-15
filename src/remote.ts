@@ -6,8 +6,8 @@ export async function syncRemote(
   remote: string,
   branch: string
 ): Promise<{ ok: true; pushed: true } | { ok: false; reason: TooltipKey }> {
-  const { execFile } = require("node:child_process") as typeof import("node:child_process");
-  const { promisify } = require("node:util") as typeof import("node:util");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
   const execFileP = promisify(execFile);
   const effectiveBranch =
     branch ||

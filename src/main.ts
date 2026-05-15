@@ -79,8 +79,8 @@ export default class AutoCommitPlugin extends Plugin {
   async onload() {
     if (Platform.isMobile) return;
 
-    const { execFile } = require("node:child_process") as typeof import("node:child_process");
-    const { promisify } = require("node:util") as typeof import("node:util");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
     this.execFileP = promisify(execFile) as ExecFileP;
 
     await this.loadSettings();
