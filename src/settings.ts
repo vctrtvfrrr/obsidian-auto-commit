@@ -1,5 +1,6 @@
 export interface AutoCommitSettings {
   inactivityMinutes: number;
+  fetchIntervalMinutes: number;
   branch: string;
   remote: string;
   pushEnabled: boolean;
@@ -8,6 +9,7 @@ export interface AutoCommitSettings {
 
 export const DEFAULT_SETTINGS: AutoCommitSettings = {
   inactivityMinutes: 15,
+  fetchIntervalMinutes: 5,
   branch: "",
   remote: "origin",
   pushEnabled: true,

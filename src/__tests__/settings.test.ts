@@ -10,6 +10,7 @@ describe("obfuscate / deobfuscate", () => {
   it("round-trips custom settings", () => {
     const cfg: AutoCommitSettings = {
       inactivityMinutes: 5,
+      fetchIntervalMinutes: 10,
       branch: "main",
       remote: "upstream",
       pushEnabled: false,
@@ -26,6 +27,7 @@ describe("obfuscate / deobfuscate", () => {
   it("deobfuscate is the exact inverse of obfuscate", () => {
     const cfg: AutoCommitSettings = {
       inactivityMinutes: 30,
+      fetchIntervalMinutes: 5,
       branch: "",
       remote: "origin",
       pushEnabled: true,
@@ -34,6 +36,7 @@ describe("obfuscate / deobfuscate", () => {
     const encoded = obfuscate(cfg);
     const decoded = deobfuscate(encoded);
     expect(decoded.inactivityMinutes).toBe(30);
+    expect(decoded.fetchIntervalMinutes).toBe(5);
     expect(decoded.branch).toBe("");
     expect(decoded.remote).toBe("origin");
     expect(decoded.pushEnabled).toBe(true);

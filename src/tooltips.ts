@@ -27,6 +27,10 @@ export const TOOLTIPS = {
     "Push failed after local commit. Check credentials, network, and remote permissions.",
   failedGitStatus:
     "Could not check repository status with Git. See the console for details.",
+  pulling: "Applying remote changes…",
+  pulledOk: "Remote changes applied successfully.",
+  failedPullConflict:
+    "Could not apply remote changes; there are divergent local commits. Auto-sync will resolve it.",
 } as const;
 
 export type TooltipKey = keyof typeof TOOLTIPS;

@@ -30,6 +30,7 @@ var import_obsidian4 = require("obsidian");
 // src/settings.ts
 var DEFAULT_SETTINGS = {
   inactivityMinutes: 15,
+  fetchIntervalMinutes: 5,
   branch: "",
   remote: "origin",
   pushEnabled: true,
@@ -57,7 +58,10 @@ var TOOLTIPS = {
   failedAi: "Could not generate the commit message with AI. Changes remain staged.",
   failedRebaseConflict: "Conflict while updating from remote; rebase was aborted. Resolve manually.",
   failedPush: "Push failed after local commit. Check credentials, network, and remote permissions.",
-  failedGitStatus: "Could not check repository status with Git. See the console for details."
+  failedGitStatus: "Could not check repository status with Git. See the console for details.",
+  pulling: "Applying remote changes\u2026",
+  pulledOk: "Remote changes applied successfully.",
+  failedPullConflict: "Could not apply remote changes; there are divergent local commits. Auto-sync will resolve it."
 };
 
 // src/guards.ts
@@ -213,6 +217,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
     this.timer = null;
+    this.fetchIntervalId = null;
     this.isRunning = false;
     this.statusBarItem = null;
   }
@@ -245,6 +250,12 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
   setStatusNoChanges() {
     this.updateStatus(`Auto-commit: no changes ${this.formatTimeHm()}`, "noChanges");
   }
+  setStatusPulling() {
+    this.updateStatus("Auto-commit: pulling...", "pulling");
+  }
+  setStatusPulledOk() {
+    this.updateStatus(`Auto-commit: pulled ${this.formatTimeHm()}`, "pulledOk");
+  }
   async onload() {
     if (import_obsidian4.Platform.isMobile) return;
     await this.loadSettings();
@@ -269,6 +280,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       name: "Run now",
       callback: () => this.runCommit()
     });
+    this.startFetchInterval();
     const cwd = this.getVaultPath();
     try {
       const { stdout } = await execFileP4("git", ["status", "--porcelain"], { cwd });
@@ -280,6 +292,10 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.fetchIntervalId !== null) {
+      window.clearInterval(this.fetchIntervalId);
+      this.fetchIntervalId = null;
     }
   }
   getVaultPath() {
@@ -325,6 +341,65 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     if (!this.settings.pushEnabled) return { ok: true, pushed: false };
     return syncRemote(cwd, this.settings.remote, this.settings.branch);
   }
+  startFetchInterval() {
+    if (this.fetchIntervalId !== null) {
+      window.clearInterval(this.fetchIntervalId);
+      this.fetchIntervalId = null;
+    }
+    if (this.settings.fetchIntervalMinutes <= 0) return;
+    this.fetchIntervalId = window.setInterval(
+      () => this.doFetch(),
+      this.settings.fetchIntervalMinutes * 6e4
+    );
+  }
+  restartFetchInterval() {
+    this.startFetchInterval();
+  }
+  async doFetch() {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    try {
+      const cwd = this.getVaultPath();
+      const guardResult = await checkRepoGuards(cwd);
+      if (guardResult !== null) return;
+      const remote = this.settings.remote;
+      const branch = this.settings.branch || (await execFileP4("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
+      try {
+        await execFileP4("git", ["fetch", remote], { cwd });
+      } catch (e) {
+        return;
+      }
+      let aheadCount = 0;
+      try {
+        const { stdout } = await execFileP4(
+          "git",
+          ["rev-list", `HEAD..${remote}/${branch}`, "--count"],
+          { cwd }
+        );
+        aheadCount = parseInt(stdout.trim(), 10);
+      } catch (e) {
+        return;
+      }
+      if (aheadCount === 0) return;
+      const { stdout: porcelain } = await execFileP4(
+        "git",
+        ["status", "--porcelain"],
+        { cwd }
+      );
+      if (porcelain.trim()) return;
+      this.setStatusPulling();
+      try {
+        await execFileP4("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        this.setStatusPulledOk();
+      } catch (e) {
+        this.setStatusFailed("failedPullConflict");
+      }
+    } catch (err) {
+      console.error("Auto-commit: unexpected error in doFetch:", err);
+    } finally {
+      this.isRunning = false;
+    }
+  }
   async loadSettings() {
     const raw = await this.loadData();
     if (!raw) {
@@ -361,6 +436,15 @@ var AutoCommitSettingTab = class extends import_obsidian4.PluginSettingTab {
         if (isNaN(num) || num < 1) return;
         this.plugin.settings.inactivityMinutes = num;
         await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Fetch interval (minutes)").setDesc("Periodically fetch and pull remote changes. Set to 0 to disable.").addText(
+      (text) => text.setPlaceholder("5").setValue(String(this.plugin.settings.fetchIntervalMinutes)).onChange(async (value) => {
+        const num = parseInt(value, 10);
+        if (isNaN(num) || num < 0) return;
+        this.plugin.settings.fetchIntervalMinutes = num;
+        await this.plugin.saveSettings();
+        this.plugin.restartFetchInterval();
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Branch").setDesc("Branch to push to. Leave empty to use the current branch.").addText(

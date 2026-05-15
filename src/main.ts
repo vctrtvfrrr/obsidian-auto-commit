@@ -25,6 +25,7 @@ const execFileP = promisify(execFile);
 export default class AutoCommitPlugin extends Plugin {
   settings: AutoCommitSettings = { ...DEFAULT_SETTINGS };
   private timer: number | null = null;
+  private fetchIntervalId: number | null = null;
   private isRunning = false;
   private statusBarItem: HTMLElement | null = null;
 
@@ -64,6 +65,14 @@ export default class AutoCommitPlugin extends Plugin {
     this.updateStatus(`Auto-commit: no changes ${this.formatTimeHm()}`, "noChanges");
   }
 
+  private setStatusPulling(): void {
+    this.updateStatus("Auto-commit: pulling...", "pulling");
+  }
+
+  private setStatusPulledOk(): void {
+    this.updateStatus(`Auto-commit: pulled ${this.formatTimeHm()}`, "pulledOk");
+  }
+
   async onload() {
     if (Platform.isMobile) return;
 
@@ -96,6 +105,8 @@ export default class AutoCommitPlugin extends Plugin {
       callback: () => this.runCommit(),
     });
 
+    this.startFetchInterval();
+
     // Commit any orphaned changes from previous session
     const cwd = this.getVaultPath();
     try {
@@ -110,6 +121,10 @@ export default class AutoCommitPlugin extends Plugin {
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.fetchIntervalId !== null) {
+      window.clearInterval(this.fetchIntervalId);
+      this.fetchIntervalId = null;
     }
   }
 
@@ -164,6 +179,79 @@ export default class AutoCommitPlugin extends Plugin {
     return syncRemote(cwd, this.settings.remote, this.settings.branch);
   }
 
+  startFetchInterval(): void {
+    if (this.fetchIntervalId !== null) {
+      window.clearInterval(this.fetchIntervalId);
+      this.fetchIntervalId = null;
+    }
+    if (this.settings.fetchIntervalMinutes <= 0) return;
+    this.fetchIntervalId = window.setInterval(
+      () => this.doFetch(),
+      this.settings.fetchIntervalMinutes * 60_000
+    );
+  }
+
+  restartFetchInterval(): void {
+    this.startFetchInterval();
+  }
+
+  private async doFetch(): Promise<void> {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    try {
+      const cwd = this.getVaultPath();
+
+      const guardResult = await checkRepoGuards(cwd);
+      if (guardResult !== null) return;
+
+      const remote = this.settings.remote;
+      const branch =
+        this.settings.branch ||
+        (
+          await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })
+        ).stdout.trim();
+
+      try {
+        await execFileP("git", ["fetch", remote], { cwd });
+      } catch {
+        return;
+      }
+
+      let aheadCount = 0;
+      try {
+        const { stdout } = await execFileP(
+          "git",
+          ["rev-list", `HEAD..${remote}/${branch}`, "--count"],
+          { cwd }
+        );
+        aheadCount = parseInt(stdout.trim(), 10);
+      } catch {
+        return;
+      }
+      if (aheadCount === 0) return;
+
+      const { stdout: porcelain } = await execFileP(
+        "git",
+        ["status", "--porcelain"],
+        { cwd }
+      );
+      if (porcelain.trim()) return;
+
+      this.setStatusPulling();
+
+      try {
+        await execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        this.setStatusPulledOk();
+      } catch {
+        this.setStatusFailed("failedPullConflict");
+      }
+    } catch (err) {
+      console.error("Auto-commit: unexpected error in doFetch:", err);
+    } finally {
+      this.isRunning = false;
+    }
+  }
+
   async loadSettings() {
     const raw = await this.loadData();
     if (!raw) {
@@ -215,6 +303,22 @@ class AutoCommitSettingTab extends PluginSettingTab {
             if (isNaN(num) || num < 1) return;
             this.plugin.settings.inactivityMinutes = num;
             await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Fetch interval (minutes)")
+      .setDesc("Periodically fetch and pull remote changes. Set to 0 to disable.")
+      .addText((text) =>
+        text
+          .setPlaceholder("5")
+          .setValue(String(this.plugin.settings.fetchIntervalMinutes))
+          .onChange(async (value) => {
+            const num = parseInt(value, 10);
+            if (isNaN(num) || num < 0) return;
+            this.plugin.settings.fetchIntervalMinutes = num;
+            await this.plugin.saveSettings();
+            this.plugin.restartFetchInterval();
           })
       );
 
