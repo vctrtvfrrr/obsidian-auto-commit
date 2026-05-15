@@ -1,82 +1,25 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import {
   App,
   FileSystemAdapter,
   Notice,
   Plugin,
   PluginSettingTab,
-  RequestUrlParam,
   Setting,
-  requestUrl,
 } from "obsidian";
+import {
+  type AutoCommitSettings,
+  DEFAULT_SETTINGS,
+  deobfuscate,
+  obfuscate,
+} from "./src/settings";
+import { TOOLTIPS, type TooltipKey } from "./src/tooltips";
+import { checkRepoGuards } from "./src/guards";
+import { createCommit } from "./src/commit";
+import { syncRemote } from "./src/remote";
 
 const execFileP = promisify(execFile);
-
-// ---------- Settings ----------
-
-interface AutoCommitSettings {
-  inactivityMinutes: number;
-  branch: string;
-  remote: string;
-  pushEnabled: boolean;
-  anthropicApiKey: string;
-}
-
-const DEFAULT_SETTINGS: AutoCommitSettings = {
-  inactivityMinutes: 15,
-  branch: "",
-  remote: "origin",
-  pushEnabled: true,
-  anthropicApiKey: "",
-};
-
-// ---------- Obfuscation ----------
-
-const rev = (s: string) => s.split("").reverse().join("");
-const obfuscate = (cfg: AutoCommitSettings): string =>
-  rev(btoa(JSON.stringify(cfg)));
-const deobfuscate = (s: string): AutoCommitSettings =>
-  JSON.parse(atob(rev(s)));
-
-// ---------- Tooltip catalog ----------
-
-const TOOLTIPS = {
-  idle: "Ready. Sync runs after the inactivity interval or via the Run now command.",
-  syncing: "Syncing the repository…",
-  noChanges: "No pending changes to commit.",
-  okWithPush: "Commit created and changes pushed to the remote successfully.",
-  okNoPush:
-    "Commit created in the local repository only. Auto-push is disabled in settings.",
-  failedUnexpected: "An unexpected error occurred. See the console for details.",
-  failedMerge:
-    "A merge is in progress. Complete or abort it manually before auto-sync.",
-  failedCherryPick:
-    "A cherry-pick is in progress. Complete or abort it manually before auto-sync.",
-  failedRevert:
-    "A revert is in progress. Complete or abort it manually before auto-sync.",
-  failedBisect: "A bisect is in progress. Finish or abort it before auto-sync.",
-  failedRebase:
-    "A rebase is in progress. Complete or abort it manually before auto-sync.",
-  failedDetached:
-    "The repository is in detached HEAD state. Check out a branch before auto-sync.",
-  failedDiffTooLarge:
-    "The diff exceeded the 50 KB limit. Review and commit manually.",
-  failedAi:
-    "Could not generate the commit message with AI. Changes remain staged.",
-  failedRebaseConflict:
-    "Conflict while updating from remote; rebase was aborted. Resolve manually.",
-  failedPush:
-    "Push failed after local commit. Check credentials, network, and remote permissions.",
-  failedGitStatus:
-    "Could not check repository status with Git. See the console for details.",
-} as const;
-
-type TooltipKey = keyof typeof TOOLTIPS;
-
-// ---------- Plugin ----------
 
 export default class AutoCommitPlugin extends Plugin {
   settings: AutoCommitSettings = { ...DEFAULT_SETTINGS };
@@ -153,14 +96,8 @@ export default class AutoCommitPlugin extends Plugin {
     // Commit any orphaned changes from previous session
     const cwd = this.getVaultPath();
     try {
-      const { stdout } = await execFileP(
-        "git",
-        ["status", "--porcelain"],
-        { cwd }
-      );
-      if (stdout.trim()) {
-        this.runCommit();
-      }
+      const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });
+      if (stdout.trim()) this.runCommit();
     } catch {
       // If git status fails here, the commit attempt will handle it
     }
@@ -178,9 +115,7 @@ export default class AutoCommitPlugin extends Plugin {
   }
 
   private resetTimer() {
-    if (this.timer !== null) {
-      window.clearTimeout(this.timer);
-    }
+    if (this.timer !== null) window.clearTimeout(this.timer);
     this.timer = window.setTimeout(
       () => this.runCommit(),
       this.settings.inactivityMinutes * 60_000
@@ -204,191 +139,37 @@ export default class AutoCommitPlugin extends Plugin {
   private async doCommit() {
     const cwd = this.getVaultPath();
 
-    // Guard: special repo state
-    const specialStateGuards: [string, TooltipKey][] = [
-      [".git/MERGE_HEAD", "failedMerge"],
-      [".git/CHERRY_PICK_HEAD", "failedCherryPick"],
-      [".git/REVERT_HEAD", "failedRevert"],
-      [".git/BISECT_LOG", "failedBisect"],
-    ];
-    for (const [f, tooltipKey] of specialStateGuards) {
-      if (existsSync(join(cwd, f))) {
-        console.info(`Auto-commit: skipped — repo in special state (${f})`);
-        this.setStatusFailed(tooltipKey);
-        return;
-      }
-    }
-    if (
-      existsSync(join(cwd, ".git/rebase-merge")) ||
-      existsSync(join(cwd, ".git/rebase-apply"))
-    ) {
-      console.info("Auto-commit: skipped — rebase in progress");
-      this.setStatusFailed("failedRebase");
+    const guardResult = await checkRepoGuards(cwd);
+    if (guardResult !== null) {
+      this.setStatusFailed(guardResult);
       return;
     }
 
-    // Guard: detached HEAD
-    try {
-      await execFileP("git", ["symbolic-ref", "-q", "HEAD"], { cwd });
-    } catch {
-      console.info("Auto-commit: skipped — detached HEAD");
-      this.setStatusFailed("failedDetached");
-      return;
-    }
-
-    // Guard: no changes
-    let statusOut: string;
-    try {
-      const { stdout } = await execFileP(
-        "git",
-        ["status", "--porcelain"],
-        { cwd }
-      );
-      statusOut = stdout;
-    } catch {
-      this.setStatusFailed("failedGitStatus");
-      return;
-    }
-    if (!statusOut.trim()) {
+    const commitResult = await createCommit(cwd, this.settings.anthropicApiKey);
+    if (commitResult === "noChanges") {
       this.setStatusNoChanges();
       return;
     }
-
-    // Stage everything
-    await execFileP("git", ["add", "-A"], { cwd });
-
-    // Get diff
-    const { stdout: diff } = await execFileP(
-      "git",
-      ["diff", "--staged"],
-      { cwd }
-    );
-
-    // Guard: diff too large
-    if (diff.length > 50_000) {
-      new Notice(
-        "Auto-commit: diff > 50 KB, requer revisão manual. Resolva via terminal.",
-        0
-      );
-      this.setStatusFailed("failedDiffTooLarge");
+    if (commitResult !== null) {
+      this.setStatusFailed(commitResult);
       return;
     }
 
-    // Generate commit message via AI
-    let message: string;
-    try {
-      message = await this.generateCommitMessage(diff);
-    } catch (err) {
-      new Notice(
-        "Auto-commit: falha ao gerar mensagem (IA indisponível). Mudanças continuam pendentes.",
-        0
-      );
-      console.error("Auto-commit: AI error:", err);
-      this.setStatusFailed("failedAi");
-      return;
-    }
-
-    // Commit
-    await execFileP("git", ["commit", "-m", message], { cwd });
-
-    // Push
     if (!this.settings.pushEnabled) {
       this.setStatusOk(false);
       return;
     }
 
-    const remote = this.settings.remote;
-    const effectiveBranch =
-      this.settings.branch ||
-      (
-        await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })
-      ).stdout.trim();
-
-    await execFileP("git", ["fetch", remote], { cwd });
-
-    try {
-      const { stdout: aheadCount } = await execFileP(
-        "git",
-        ["rev-list", `HEAD..${remote}/${effectiveBranch}`, "--count"],
-        { cwd }
-      );
-      if (parseInt(aheadCount.trim(), 10) > 0) {
-        try {
-          await execFileP(
-            "git",
-            ["pull", "--rebase", remote, effectiveBranch],
-            { cwd }
-          );
-        } catch {
-          await execFileP("git", ["rebase", "--abort"], { cwd }).catch(
-            () => {}
-          );
-          new Notice(
-            "Auto-commit: conflito com remoto. Rebase abortado. Resolva manualmente.",
-            0
-          );
-          this.setStatusFailed("failedRebaseConflict");
-          return;
-        }
-      }
-    } catch {
-      // Remote branch may not exist yet; proceed to push
-    }
-
-    try {
-      const pushArgs = this.settings.branch
-        ? ["push", remote, effectiveBranch]
-        : ["push", remote, "HEAD"];
-      await execFileP("git", pushArgs, { cwd });
-      this.setStatusOk(true);
-    } catch (err) {
-      new Notice(
-        "Auto-commit: push falhou. Commit local feito mas não enviado. Verifique credenciais/rede.",
-        0
-      );
-      console.error("Auto-commit: push error:", err);
-      this.setStatusFailed("failedPush");
-    }
-  }
-
-  private async generateCommitMessage(diff: string): Promise<string> {
-    const req: RequestUrlParam = {
-      url: "https://api.anthropic.com/v1/messages",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.settings.anthropicApiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 100,
-        temperature: 0.2,
-        system:
-          "You generate commit messages in English (US), in imperative mode, for a vault in Obsidian. Rules:\n" +
-          "- A single line of up to 72 characters.\n" +
-          "- No conventional prefixes (no \"feat:\", \"docs:\", etc.).\n" +
-          "- Describe what changed concretely, citing files or areas when useful.\n" +
-          "- If there are many heterogeneous changes, summarize the dominant theme.\n" +
-          "- Any changes to the `.obsidian/` directory should not be detailed, only mentioned.\n" +
-          "- Do not use quotation marks, backticks, or special characters. Just the message, without prefixes " +
-          "like \"Message:\" or explanatory text.",
-        messages: [{ role: "user", content: diff }],
-      }),
-      throw: false,
-    };
-
-    const timeout = new Promise<never>((_, reject) =>
-      window.setTimeout(() => reject(new Error("timeout")), 60_000)
+    const remoteResult = await syncRemote(
+      cwd,
+      this.settings.remote,
+      this.settings.branch
     );
-
-    const res = await Promise.race([requestUrl(req), timeout]);
-
-    if (res.status >= 400) {
-      throw new Error(`HTTP ${res.status}`);
+    if (remoteResult !== null) {
+      this.setStatusFailed(remoteResult);
+    } else {
+      this.setStatusOk(true);
     }
-
-    return (res.json.content[0].text as string).trim();
   }
 
   async loadSettings() {
