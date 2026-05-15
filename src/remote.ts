@@ -9,7 +9,7 @@ export async function syncRemote(
   cwd: string,
   remote: string,
   branch: string
-): Promise<TooltipKey | null> {
+): Promise<{ ok: true; pushed: true } | { ok: false; reason: TooltipKey }> {
   const effectiveBranch =
     branch ||
     (
@@ -33,7 +33,7 @@ export async function syncRemote(
           "Auto-commit: conflito com remoto. Rebase abortado. Resolva manualmente.",
           0
         );
-        return "failedRebaseConflict";
+        return { ok: false, reason: "failedRebaseConflict" };
       }
     }
   } catch {
@@ -45,13 +45,13 @@ export async function syncRemote(
       ? ["push", remote, effectiveBranch]
       : ["push", remote, "HEAD"];
     await execFileP("git", pushArgs, { cwd });
-    return null;
+    return { ok: true, pushed: true };
   } catch (err) {
     new Notice(
       "Auto-commit: push falhou. Commit local feito mas não enviado. Verifique credenciais/rede.",
       0
     );
     console.error("Auto-commit: push error:", err);
-    return "failedPush";
+    return { ok: false, reason: "failedPush" };
   }
 }

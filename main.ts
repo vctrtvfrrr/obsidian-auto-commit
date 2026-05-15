@@ -14,7 +14,7 @@ import {
   deobfuscate,
   obfuscate,
 } from "./src/settings";
-import { TOOLTIPS, type TooltipKey } from "./src/tooltips";
+import { TOOLTIPS, type TooltipKey, type SyncResult } from "./src/tooltips";
 import { checkRepoGuards } from "./src/guards";
 import { createCommit } from "./src/commit";
 import { syncRemote } from "./src/remote";
@@ -127,7 +127,18 @@ export default class AutoCommitPlugin extends Plugin {
     this.isRunning = true;
     this.setStatusSyncing();
     try {
-      await this.doCommit();
+      const result = await this.doCommit();
+      switch (result.ok) {
+        case true:
+          this.setStatusOk(result.pushed);
+          break;
+        case false:
+          this.setStatusFailed(result.reason);
+          break;
+        case "noChanges":
+          this.setStatusNoChanges();
+          break;
+      }
     } catch (err) {
       this.setStatusFailed();
       console.error("Auto-commit: unexpected error:", err);
@@ -136,40 +147,18 @@ export default class AutoCommitPlugin extends Plugin {
     }
   }
 
-  private async doCommit() {
+  private async doCommit(): Promise<SyncResult> {
     const cwd = this.getVaultPath();
 
     const guardResult = await checkRepoGuards(cwd);
-    if (guardResult !== null) {
-      this.setStatusFailed(guardResult);
-      return;
-    }
+    if (guardResult !== null) return guardResult;
 
     const commitResult = await createCommit(cwd, this.settings.anthropicApiKey);
-    if (commitResult === "noChanges") {
-      this.setStatusNoChanges();
-      return;
-    }
-    if (commitResult !== null) {
-      this.setStatusFailed(commitResult);
-      return;
-    }
+    if (commitResult !== null) return commitResult;
 
-    if (!this.settings.pushEnabled) {
-      this.setStatusOk(false);
-      return;
-    }
+    if (!this.settings.pushEnabled) return { ok: true, pushed: false };
 
-    const remoteResult = await syncRemote(
-      cwd,
-      this.settings.remote,
-      this.settings.branch
-    );
-    if (remoteResult !== null) {
-      this.setStatusFailed(remoteResult);
-    } else {
-      this.setStatusOk(true);
-    }
+    return syncRemote(cwd, this.settings.remote, this.settings.branch);
   }
 
   async loadSettings() {

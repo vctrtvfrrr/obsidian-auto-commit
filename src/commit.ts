@@ -9,16 +9,16 @@ const execFileP = promisify(execFile);
 export async function createCommit(
   cwd: string,
   apiKey: string
-): Promise<TooltipKey | null> {
+): Promise<{ ok: false; reason: TooltipKey } | { ok: "noChanges" } | null> {
   let statusOut: string;
   try {
     const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });
     statusOut = stdout;
   } catch {
-    return "failedGitStatus";
+    return { ok: false, reason: "failedGitStatus" };
   }
 
-  if (!statusOut.trim()) return "noChanges";
+  if (!statusOut.trim()) return { ok: "noChanges" };
 
   await execFileP("git", ["add", "-A"], { cwd });
 
@@ -29,7 +29,7 @@ export async function createCommit(
       "Auto-commit: diff > 50 KB, requer revisão manual. Resolva via terminal.",
       0
     );
-    return "failedDiffTooLarge";
+    return { ok: false, reason: "failedDiffTooLarge" };
   }
 
   let message: string;
@@ -41,7 +41,7 @@ export async function createCommit(
       0
     );
     console.error("Auto-commit: AI error:", err);
-    return "failedAi";
+    return { ok: false, reason: "failedAi" };
   }
 
   await execFileP("git", ["commit", "-m", message], { cwd });

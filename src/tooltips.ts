@@ -30,3 +30,8 @@ export const TOOLTIPS = {
 } as const;
 
 export type TooltipKey = keyof typeof TOOLTIPS;
+
+export type SyncResult =
+  | { ok: true; pushed: boolean }
+  | { ok: false; reason: TooltipKey }
+  | { ok: "noChanges" };
