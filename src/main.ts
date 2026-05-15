@@ -13,11 +13,11 @@ import {
   DEFAULT_SETTINGS,
   deobfuscate,
   obfuscate,
-} from "./src/settings";
-import { TOOLTIPS, type TooltipKey, type SyncResult } from "./src/tooltips";
-import { checkRepoGuards } from "./src/guards";
-import { createCommit } from "./src/commit";
-import { syncRemote } from "./src/remote";
+} from "./settings";
+import { TOOLTIPS, type TooltipKey, type SyncResult } from "./tooltips";
+import { checkRepoGuards } from "./guards";
+import { createCommit } from "./commit";
+import { syncRemote } from "./remote";
 
 const execFileP = promisify(execFile);
 
@@ -72,7 +72,7 @@ export default class AutoCommitPlugin extends Plugin {
       await execFileP("git", ["--version"]);
     } catch {
       new Notice(
-        "Auto-commit: comando 'git' não encontrado no PATH. Verifique a instalação.",
+        "Auto-commit: 'git' not found in PATH. Check your Git installation.",
         0
       );
       return;

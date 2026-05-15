@@ -26,7 +26,7 @@ export async function createCommit(
 
   if (diff.length > 50_000) {
     new Notice(
-      "Auto-commit: diff > 50 KB, requer revisão manual. Resolva via terminal.",
+      "Auto-commit: diff exceeds 50 KB. Review and commit manually via terminal.",
       0
     );
     return { ok: false, reason: "failedDiffTooLarge" };
@@ -37,7 +37,7 @@ export async function createCommit(
     message = await generateCommitMessage(diff, apiKey);
   } catch (err) {
     new Notice(
-      "Auto-commit: falha ao gerar mensagem (IA indisponível). Mudanças continuam pendentes.",
+      "Auto-commit: failed to generate commit message (AI unavailable). Changes remain staged.",
       0
     );
     console.error("Auto-commit: AI error:", err);

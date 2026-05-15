@@ -30,7 +30,7 @@ export async function syncRemote(
       } catch {
         await execFileP("git", ["rebase", "--abort"], { cwd }).catch(() => {});
         new Notice(
-          "Auto-commit: conflito com remoto. Rebase abortado. Resolva manualmente.",
+          "Auto-commit: conflict while updating from remote. Rebase aborted. Resolve manually.",
           0
         );
         return { ok: false, reason: "failedRebaseConflict" };
@@ -48,7 +48,7 @@ export async function syncRemote(
     return { ok: true, pushed: true };
   } catch (err) {
     new Notice(
-      "Auto-commit: push falhou. Commit local feito mas não enviado. Verifique credenciais/rede.",
+      "Auto-commit: push failed. Local commit created but not pushed. Check credentials and network.",
       0
     );
     console.error("Auto-commit: push error:", err);
