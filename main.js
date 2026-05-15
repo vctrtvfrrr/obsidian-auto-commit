@@ -23,8 +23,6 @@ __export(main_exports, {
   default: () => AutoCommitPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_node_child_process4 = require("node:child_process");
-var import_node_util4 = require("node:util");
 var import_obsidian4 = require("obsidian");
 
 // src/settings.ts
@@ -65,11 +63,6 @@ var TOOLTIPS = {
 };
 
 // src/guards.ts
-var import_node_child_process = require("node:child_process");
-var import_node_util = require("node:util");
-var import_node_fs = require("node:fs");
-var import_node_path = require("node:path");
-var execFileP = (0, import_node_util.promisify)(import_node_child_process.execFile);
 var SPECIAL_STATE_GUARDS = [
   [".git/MERGE_HEAD", "failedMerge"],
   [".git/CHERRY_PICK_HEAD", "failedCherryPick"],
@@ -77,13 +70,18 @@ var SPECIAL_STATE_GUARDS = [
   [".git/BISECT_LOG", "failedBisect"]
 ];
 async function checkRepoGuards(cwd) {
+  const { existsSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const execFileP = promisify(execFile);
   for (const [f, reason] of SPECIAL_STATE_GUARDS) {
-    if ((0, import_node_fs.existsSync)((0, import_node_path.join)(cwd, f))) {
+    if (existsSync(join(cwd, f))) {
       console.info(`Auto-commit: skipped \u2014 repo in special state (${f})`);
       return { ok: false, reason };
     }
   }
-  if ((0, import_node_fs.existsSync)((0, import_node_path.join)(cwd, ".git/rebase-merge")) || (0, import_node_fs.existsSync)((0, import_node_path.join)(cwd, ".git/rebase-apply"))) {
+  if (existsSync(join(cwd, ".git/rebase-merge")) || existsSync(join(cwd, ".git/rebase-apply"))) {
     console.info("Auto-commit: skipped \u2014 rebase in progress");
     return { ok: false, reason: "failedRebase" };
   }
@@ -97,8 +95,6 @@ async function checkRepoGuards(cwd) {
 }
 
 // src/commit.ts
-var import_node_child_process2 = require("node:child_process");
-var import_node_util2 = require("node:util");
 var import_obsidian2 = require("obsidian");
 
 // src/ai.ts
@@ -133,18 +129,20 @@ async function generateCommitMessage(diff, apiKey) {
 }
 
 // src/commit.ts
-var execFileP2 = (0, import_node_util2.promisify)(import_node_child_process2.execFile);
 async function createCommit(cwd, apiKey) {
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const execFileP = promisify(execFile);
   let statusOut;
   try {
-    const { stdout } = await execFileP2("git", ["status", "--porcelain"], { cwd });
+    const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });
     statusOut = stdout;
   } catch (e) {
     return { ok: false, reason: "failedGitStatus" };
   }
   if (!statusOut.trim()) return { ok: "noChanges" };
-  await execFileP2("git", ["add", "-A"], { cwd });
-  const { stdout: diff } = await execFileP2("git", ["diff", "--staged"], { cwd });
+  await execFileP("git", ["add", "-A"], { cwd });
+  const { stdout: diff } = await execFileP("git", ["diff", "--staged"], { cwd });
   if (diff.length > 5e4) {
     new import_obsidian2.Notice(
       "Auto-commit: diff exceeds 50 KB. Review and commit manually via terminal.",
@@ -163,29 +161,29 @@ async function createCommit(cwd, apiKey) {
     console.error("Auto-commit: AI error:", err);
     return { ok: false, reason: "failedAi" };
   }
-  await execFileP2("git", ["commit", "-m", message], { cwd });
+  await execFileP("git", ["commit", "-m", message], { cwd });
   return null;
 }
 
 // src/remote.ts
-var import_node_child_process3 = require("node:child_process");
-var import_node_util3 = require("node:util");
 var import_obsidian3 = require("obsidian");
-var execFileP3 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
 async function syncRemote(cwd, remote, branch) {
-  const effectiveBranch = branch || (await execFileP3("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
-  await execFileP3("git", ["fetch", remote], { cwd });
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const execFileP = promisify(execFile);
+  const effectiveBranch = branch || (await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
+  await execFileP("git", ["fetch", remote], { cwd });
   try {
-    const { stdout: aheadCount } = await execFileP3(
+    const { stdout: aheadCount } = await execFileP(
       "git",
       ["rev-list", `HEAD..${remote}/${effectiveBranch}`, "--count"],
       { cwd }
     );
     if (parseInt(aheadCount.trim(), 10) > 0) {
       try {
-        await execFileP3("git", ["pull", "--rebase", remote, effectiveBranch], { cwd });
+        await execFileP("git", ["pull", "--rebase", remote, effectiveBranch], { cwd });
       } catch (e) {
-        await execFileP3("git", ["rebase", "--abort"], { cwd }).catch(() => {
+        await execFileP("git", ["rebase", "--abort"], { cwd }).catch(() => {
         });
         new import_obsidian3.Notice(
           "Auto-commit: conflict while updating from remote. Rebase aborted. Resolve manually.",
@@ -198,7 +196,7 @@ async function syncRemote(cwd, remote, branch) {
   }
   try {
     const pushArgs = branch ? ["push", remote, effectiveBranch] : ["push", remote, "HEAD"];
-    await execFileP3("git", pushArgs, { cwd });
+    await execFileP("git", pushArgs, { cwd });
     return { ok: true, pushed: true };
   } catch (err) {
     new import_obsidian3.Notice(
@@ -211,7 +209,6 @@ async function syncRemote(cwd, remote, branch) {
 }
 
 // src/main.ts
-var execFileP4 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
 var AutoCommitPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
@@ -258,10 +255,13 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
   }
   async onload() {
     if (import_obsidian4.Platform.isMobile) return;
+    const { execFile } = require("node:child_process");
+    const { promisify } = require("node:util");
+    this.execFileP = promisify(execFile);
     await this.loadSettings();
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));
     try {
-      await execFileP4("git", ["--version"]);
+      await this.execFileP("git", ["--version"]);
     } catch (e) {
       new import_obsidian4.Notice(
         "Auto-commit: 'git' not found in PATH. Check your Git installation.",
@@ -283,7 +283,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     this.startFetchInterval();
     const cwd = this.getVaultPath();
     try {
-      const { stdout } = await execFileP4("git", ["status", "--porcelain"], { cwd });
+      const { stdout } = await this.execFileP("git", ["status", "--porcelain"], { cwd });
       if (stdout.trim()) this.runCommit();
     } catch (e) {
     }
@@ -363,15 +363,15 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       const guardResult = await checkRepoGuards(cwd);
       if (guardResult !== null) return;
       const remote = this.settings.remote;
-      const branch = this.settings.branch || (await execFileP4("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
+      const branch = this.settings.branch || (await this.execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
       try {
-        await execFileP4("git", ["fetch", remote], { cwd });
+        await this.execFileP("git", ["fetch", remote], { cwd });
       } catch (e) {
         return;
       }
       let aheadCount = 0;
       try {
-        const { stdout } = await execFileP4(
+        const { stdout } = await this.execFileP(
           "git",
           ["rev-list", `HEAD..${remote}/${branch}`, "--count"],
           { cwd }
@@ -381,7 +381,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
         return;
       }
       if (aheadCount === 0) return;
-      const { stdout: porcelain } = await execFileP4(
+      const { stdout: porcelain } = await this.execFileP(
         "git",
         ["status", "--porcelain"],
         { cwd }
@@ -389,7 +389,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       if (porcelain.trim()) return;
       this.setStatusPulling();
       try {
-        await execFileP4("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        await this.execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
         this.setStatusPulledOk();
       } catch (e) {
         this.setStatusFailed("failedPullConflict");

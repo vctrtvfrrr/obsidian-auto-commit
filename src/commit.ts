@@ -1,15 +1,14 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { Notice } from "obsidian";
 import type { TooltipKey } from "./tooltips";
 import { generateCommitMessage } from "./ai";
-
-const execFileP = promisify(execFile);
 
 export async function createCommit(
   cwd: string,
   apiKey: string
 ): Promise<{ ok: false; reason: TooltipKey } | { ok: "noChanges" } | null> {
+  const { execFile } = require("node:child_process") as typeof import("node:child_process");
+  const { promisify } = require("node:util") as typeof import("node:util");
+  const execFileP = promisify(execFile);
   let statusOut: string;
   try {
     const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });

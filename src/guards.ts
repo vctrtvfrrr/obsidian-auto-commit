@@ -1,10 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { TooltipKey } from "./tooltips";
-
-const execFileP = promisify(execFile);
 
 const SPECIAL_STATE_GUARDS: [string, TooltipKey][] = [
   [".git/MERGE_HEAD", "failedMerge"],
@@ -16,6 +10,11 @@ const SPECIAL_STATE_GUARDS: [string, TooltipKey][] = [
 export async function checkRepoGuards(
   cwd: string
 ): Promise<{ ok: false; reason: TooltipKey } | null> {
+  const { existsSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const { execFile } = require("node:child_process") as typeof import("node:child_process");
+  const { promisify } = require("node:util") as typeof import("node:util");
+  const execFileP = promisify(execFile);
   for (const [f, reason] of SPECIAL_STATE_GUARDS) {
     if (existsSync(join(cwd, f))) {
       console.info(`Auto-commit: skipped — repo in special state (${f})`);

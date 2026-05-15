@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import {
   App,
   FileSystemAdapter,
@@ -20,10 +18,15 @@ import { checkRepoGuards } from "./guards";
 import { createCommit } from "./commit";
 import { syncRemote } from "./remote";
 
-const execFileP = promisify(execFile);
+type ExecFileP = (
+  file: string,
+  args: string[],
+  options?: { cwd?: string }
+) => Promise<{ stdout: string; stderr: string }>;
 
 export default class AutoCommitPlugin extends Plugin {
   settings: AutoCommitSettings = { ...DEFAULT_SETTINGS };
+  private execFileP!: ExecFileP;
   private timer: number | null = null;
   private fetchIntervalId: number | null = null;
   private isRunning = false;
@@ -76,12 +79,16 @@ export default class AutoCommitPlugin extends Plugin {
   async onload() {
     if (Platform.isMobile) return;
 
+    const { execFile } = require("node:child_process") as typeof import("node:child_process");
+    const { promisify } = require("node:util") as typeof import("node:util");
+    this.execFileP = promisify(execFile) as ExecFileP;
+
     await this.loadSettings();
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));
 
     // Self-check: git must be in PATH
     try {
-      await execFileP("git", ["--version"]);
+      await this.execFileP("git", ["--version"]);
     } catch {
       new Notice(
         "Auto-commit: 'git' not found in PATH. Check your Git installation.",
@@ -110,7 +117,7 @@ export default class AutoCommitPlugin extends Plugin {
     // Commit any orphaned changes from previous session
     const cwd = this.getVaultPath();
     try {
-      const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });
+      const { stdout } = await this.execFileP("git", ["status", "--porcelain"], { cwd });
       if (stdout.trim()) this.runCommit();
     } catch {
       // If git status fails here, the commit attempt will handle it
@@ -208,18 +215,18 @@ export default class AutoCommitPlugin extends Plugin {
       const branch =
         this.settings.branch ||
         (
-          await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })
+          await this.execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })
         ).stdout.trim();
 
       try {
-        await execFileP("git", ["fetch", remote], { cwd });
+        await this.execFileP("git", ["fetch", remote], { cwd });
       } catch {
         return;
       }
 
       let aheadCount = 0;
       try {
-        const { stdout } = await execFileP(
+        const { stdout } = await this.execFileP(
           "git",
           ["rev-list", `HEAD..${remote}/${branch}`, "--count"],
           { cwd }
@@ -230,7 +237,7 @@ export default class AutoCommitPlugin extends Plugin {
       }
       if (aheadCount === 0) return;
 
-      const { stdout: porcelain } = await execFileP(
+      const { stdout: porcelain } = await this.execFileP(
         "git",
         ["status", "--porcelain"],
         { cwd }
@@ -240,7 +247,7 @@ export default class AutoCommitPlugin extends Plugin {
       this.setStatusPulling();
 
       try {
-        await execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        await this.execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
         this.setStatusPulledOk();
       } catch {
         this.setStatusFailed("failedPullConflict");
