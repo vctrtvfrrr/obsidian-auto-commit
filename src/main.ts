@@ -17,16 +17,10 @@ import { TOOLTIPS, type TooltipKey, type SyncResult } from "./tooltips";
 import { checkRepoGuards } from "./guards";
 import { createCommit } from "./commit";
 import { syncRemote } from "./remote";
-
-type ExecFileP = (
-  file: string,
-  args: string[],
-  options?: { cwd?: string }
-) => Promise<{ stdout: string; stderr: string }>;
+import { execFileAsync } from "./node-apis";
 
 export default class AutoCommitPlugin extends Plugin {
   settings: AutoCommitSettings = { ...DEFAULT_SETTINGS };
-  private execFileP!: ExecFileP;
   private timer: number | null = null;
   private fetchIntervalId: number | null = null;
   private isRunning = false;
@@ -82,10 +76,6 @@ export default class AutoCommitPlugin extends Plugin {
       return;
     }
 
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    this.execFileP = promisify(execFile) as ExecFileP;
-
     await this.loadSettings();
     console.info(
       `Auto-commit: loaded — inactivity=${this.settings.inactivityMinutes}m` +
@@ -98,7 +88,7 @@ export default class AutoCommitPlugin extends Plugin {
 
     // Self-check: git must be in PATH
     try {
-      const { stdout } = await this.execFileP("git", ["--version"]);
+      const { stdout } = await execFileAsync("git", ["--version"]);
       console.info(`Auto-commit: ${stdout.trim()}`);
     } catch (err) {
       console.error("Auto-commit: git not found in PATH", err);
@@ -129,7 +119,7 @@ export default class AutoCommitPlugin extends Plugin {
     // Commit any orphaned changes from previous session
     const cwd = this.getVaultPath();
     try {
-      const { stdout } = await this.execFileP("git", ["status", "--porcelain"], { cwd });
+      const { stdout } = await execFileAsync("git", ["status", "--porcelain"], { cwd });
       if (stdout.trim()) {
         console.info("Auto-commit: orphaned changes detected on load, triggering commit");
         this.runCommit();
@@ -252,13 +242,11 @@ export default class AutoCommitPlugin extends Plugin {
       const remote = this.settings.remote;
       const branch =
         this.settings.branch ||
-        (
-          await this.execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })
-        ).stdout.trim();
+        (await execFileAsync("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
 
       console.debug(`Auto-commit: fetching ${remote}`);
       try {
-        await this.execFileP("git", ["fetch", remote], { cwd });
+        await execFileAsync("git", ["fetch", remote], { cwd });
       } catch (err) {
         console.warn("Auto-commit: fetch failed", err);
         return;
@@ -266,7 +254,7 @@ export default class AutoCommitPlugin extends Plugin {
 
       let aheadCount = 0;
       try {
-        const { stdout } = await this.execFileP(
+        const { stdout } = await execFileAsync(
           "git",
           ["rev-list", `HEAD..${remote}/${branch}`, "--count"],
           { cwd }
@@ -284,7 +272,7 @@ export default class AutoCommitPlugin extends Plugin {
 
       console.info(`Auto-commit: ${aheadCount} new commit(s) on ${remote}/${branch}`);
 
-      const { stdout: porcelain } = await this.execFileP(
+      const { stdout: porcelain } = await execFileAsync(
         "git",
         ["status", "--porcelain"],
         { cwd }
@@ -298,7 +286,7 @@ export default class AutoCommitPlugin extends Plugin {
       console.info(`Auto-commit: merging ${remote}/${branch} (fast-forward only)`);
 
       try {
-        await this.execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        await execFileAsync("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
         console.info("Auto-commit: pull successful");
         this.setStatusPulledOk();
       } catch (err) {

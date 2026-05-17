@@ -1,27 +1,22 @@
 import { Notice } from "obsidian";
 import type { TooltipKey } from "./tooltips";
+import { execFileAsync } from "./node-apis";
 
 export async function syncRemote(
   cwd: string,
   remote: string,
   branch: string
 ): Promise<{ ok: true; pushed: true } | { ok: false; reason: TooltipKey }> {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileP = promisify(execFile);
-
   const effectiveBranch =
     branch ||
-    (
-      await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })
-    ).stdout.trim();
+    (await execFileAsync("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
   console.debug(`Auto-commit: syncing to ${remote}/${effectiveBranch}`);
 
   console.debug(`Auto-commit: fetching ${remote}`);
-  await execFileP("git", ["fetch", remote], { cwd });
+  await execFileAsync("git", ["fetch", remote], { cwd });
 
   try {
-    const { stdout: aheadCount } = await execFileP(
+    const { stdout: aheadCount } = await execFileAsync(
       "git",
       ["rev-list", `HEAD..${remote}/${effectiveBranch}`, "--count"],
       { cwd }
@@ -30,11 +25,11 @@ export async function syncRemote(
     if (count > 0) {
       console.info(`Auto-commit: remote is ${count} commit(s) ahead, rebasing`);
       try {
-        await execFileP("git", ["pull", "--rebase", remote, effectiveBranch], { cwd });
+        await execFileAsync("git", ["pull", "--rebase", remote, effectiveBranch], { cwd });
         console.info("Auto-commit: rebase successful");
       } catch (err) {
         console.warn("Auto-commit: rebase conflict, aborting", err);
-        await execFileP("git", ["rebase", "--abort"], { cwd }).catch(() => {});
+        await execFileAsync("git", ["rebase", "--abort"], { cwd }).catch(() => {});
         new Notice(
           "Auto-commit: conflict while updating from remote. Rebase aborted. Resolve manually.",
           0
@@ -45,7 +40,6 @@ export async function syncRemote(
       console.debug("Auto-commit: remote is up to date, no rebase needed");
     }
   } catch {
-    // Remote branch may not exist yet; proceed to push
     console.debug(`Auto-commit: ${remote}/${effectiveBranch} not found, skipping rebase check`);
   }
 
@@ -54,7 +48,7 @@ export async function syncRemote(
       ? ["push", remote, effectiveBranch]
       : ["push", remote, "HEAD"];
     console.debug(`Auto-commit: pushing (${pushArgs.join(" ")})`);
-    await execFileP("git", pushArgs, { cwd });
+    await execFileAsync("git", pushArgs, { cwd });
     console.info(`Auto-commit: pushed to ${remote}/${effectiveBranch}`);
     return { ok: true, pushed: true };
   } catch (err) {

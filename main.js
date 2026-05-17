@@ -1,9 +1,7 @@
 "use strict";
-var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -17,14 +15,6 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/main.ts
@@ -72,6 +62,21 @@ var TOOLTIPS = {
   failedPullConflict: "Could not apply remote changes; there are divergent local commits. Auto-sync will resolve it."
 };
 
+// src/node-apis.ts
+function execFileAsync(file, args, options) {
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  return promisify(execFile)(file, args, options);
+}
+function fsExistsSync(path) {
+  const { existsSync } = require("node:fs");
+  return existsSync(path);
+}
+function pathJoin(...parts) {
+  const { join } = require("node:path");
+  return join(...parts);
+}
+
 // src/guards.ts
 var SPECIAL_STATE_GUARDS = [
   [".git/MERGE_HEAD", "failedMerge"],
@@ -80,23 +85,18 @@ var SPECIAL_STATE_GUARDS = [
   [".git/BISECT_LOG", "failedBisect"]
 ];
 async function checkRepoGuards(cwd) {
-  const { existsSync } = await import("node:fs");
-  const { join } = await import("node:path");
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileP = promisify(execFile);
   for (const [f, reason] of SPECIAL_STATE_GUARDS) {
-    if (existsSync(join(cwd, f))) {
+    if (fsExistsSync(pathJoin(cwd, f))) {
       console.info(`Auto-commit: skipped \u2014 repo in special state (${f})`);
       return { ok: false, reason };
     }
   }
-  if (existsSync(join(cwd, ".git/rebase-merge")) || existsSync(join(cwd, ".git/rebase-apply"))) {
+  if (fsExistsSync(pathJoin(cwd, ".git/rebase-merge")) || fsExistsSync(pathJoin(cwd, ".git/rebase-apply"))) {
     console.info("Auto-commit: skipped \u2014 rebase in progress");
     return { ok: false, reason: "failedRebase" };
   }
   try {
-    await execFileP("git", ["symbolic-ref", "-q", "HEAD"], { cwd });
+    await execFileAsync("git", ["symbolic-ref", "-q", "HEAD"], { cwd });
   } catch (e) {
     console.info("Auto-commit: skipped \u2014 detached HEAD");
     return { ok: false, reason: "failedDetached" };
@@ -143,12 +143,9 @@ async function generateCommitMessage(diff, apiKey) {
 
 // src/commit.ts
 async function createCommit(cwd, apiKey) {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileP = promisify(execFile);
   let statusOut;
   try {
-    const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });
+    const { stdout } = await execFileAsync("git", ["status", "--porcelain"], { cwd });
     statusOut = stdout;
   } catch (err) {
     console.error("Auto-commit: git status failed", err);
@@ -157,8 +154,8 @@ async function createCommit(cwd, apiKey) {
   if (!statusOut.trim()) return { ok: "noChanges" };
   const changedFiles = statusOut.trim().split("\n").length;
   console.info(`Auto-commit: ${changedFiles} changed file(s), staging`);
-  await execFileP("git", ["add", "-A"], { cwd });
-  const { stdout: diff } = await execFileP("git", ["diff", "--staged"], { cwd });
+  await execFileAsync("git", ["add", "-A"], { cwd });
+  const { stdout: diff } = await execFileAsync("git", ["diff", "--staged"], { cwd });
   console.debug(`Auto-commit: staged diff size = ${diff.length} bytes`);
   if (diff.length > 5e4) {
     console.warn(`Auto-commit: diff too large (${diff.length} bytes), aborting`);
@@ -181,7 +178,7 @@ async function createCommit(cwd, apiKey) {
     console.error("Auto-commit: AI error:", err);
     return { ok: false, reason: "failedAi" };
   }
-  await execFileP("git", ["commit", "-m", message], { cwd });
+  await execFileAsync("git", ["commit", "-m", message], { cwd });
   console.info("Auto-commit: commit created");
   return null;
 }
@@ -189,15 +186,12 @@ async function createCommit(cwd, apiKey) {
 // src/remote.ts
 var import_obsidian3 = require("obsidian");
 async function syncRemote(cwd, remote, branch) {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileP = promisify(execFile);
-  const effectiveBranch = branch || (await execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
+  const effectiveBranch = branch || (await execFileAsync("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
   console.debug(`Auto-commit: syncing to ${remote}/${effectiveBranch}`);
   console.debug(`Auto-commit: fetching ${remote}`);
-  await execFileP("git", ["fetch", remote], { cwd });
+  await execFileAsync("git", ["fetch", remote], { cwd });
   try {
-    const { stdout: aheadCount } = await execFileP(
+    const { stdout: aheadCount } = await execFileAsync(
       "git",
       ["rev-list", `HEAD..${remote}/${effectiveBranch}`, "--count"],
       { cwd }
@@ -206,11 +200,11 @@ async function syncRemote(cwd, remote, branch) {
     if (count > 0) {
       console.info(`Auto-commit: remote is ${count} commit(s) ahead, rebasing`);
       try {
-        await execFileP("git", ["pull", "--rebase", remote, effectiveBranch], { cwd });
+        await execFileAsync("git", ["pull", "--rebase", remote, effectiveBranch], { cwd });
         console.info("Auto-commit: rebase successful");
       } catch (err) {
         console.warn("Auto-commit: rebase conflict, aborting", err);
-        await execFileP("git", ["rebase", "--abort"], { cwd }).catch(() => {
+        await execFileAsync("git", ["rebase", "--abort"], { cwd }).catch(() => {
         });
         new import_obsidian3.Notice(
           "Auto-commit: conflict while updating from remote. Rebase aborted. Resolve manually.",
@@ -227,7 +221,7 @@ async function syncRemote(cwd, remote, branch) {
   try {
     const pushArgs = branch ? ["push", remote, effectiveBranch] : ["push", remote, "HEAD"];
     console.debug(`Auto-commit: pushing (${pushArgs.join(" ")})`);
-    await execFileP("git", pushArgs, { cwd });
+    await execFileAsync("git", pushArgs, { cwd });
     console.info(`Auto-commit: pushed to ${remote}/${effectiveBranch}`);
     return { ok: true, pushed: true };
   } catch (err) {
@@ -290,16 +284,13 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       console.info("Auto-commit: mobile platform detected, plugin disabled");
       return;
     }
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    this.execFileP = promisify(execFile);
     await this.loadSettings();
     console.info(
       `Auto-commit: loaded \u2014 inactivity=${this.settings.inactivityMinutes}m fetch=${this.settings.fetchIntervalMinutes}m push=${this.settings.pushEnabled} remote=${this.settings.remote} branch=${this.settings.branch || "(current)"}`
     );
     this.addSettingTab(new AutoCommitSettingTab(this.app, this));
     try {
-      const { stdout } = await this.execFileP("git", ["--version"]);
+      const { stdout } = await execFileAsync("git", ["--version"]);
       console.info(`Auto-commit: ${stdout.trim()}`);
     } catch (err) {
       console.error("Auto-commit: git not found in PATH", err);
@@ -323,7 +314,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     this.startFetchInterval();
     const cwd = this.getVaultPath();
     try {
-      const { stdout } = await this.execFileP("git", ["status", "--porcelain"], { cwd });
+      const { stdout } = await execFileAsync("git", ["status", "--porcelain"], { cwd });
       if (stdout.trim()) {
         console.info("Auto-commit: orphaned changes detected on load, triggering commit");
         this.runCommit();
@@ -429,17 +420,17 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
         return;
       }
       const remote = this.settings.remote;
-      const branch = this.settings.branch || (await this.execFileP("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
+      const branch = this.settings.branch || (await execFileAsync("git", ["symbolic-ref", "--short", "HEAD"], { cwd })).stdout.trim();
       console.debug(`Auto-commit: fetching ${remote}`);
       try {
-        await this.execFileP("git", ["fetch", remote], { cwd });
+        await execFileAsync("git", ["fetch", remote], { cwd });
       } catch (err) {
         console.warn("Auto-commit: fetch failed", err);
         return;
       }
       let aheadCount = 0;
       try {
-        const { stdout } = await this.execFileP(
+        const { stdout } = await execFileAsync(
           "git",
           ["rev-list", `HEAD..${remote}/${branch}`, "--count"],
           { cwd }
@@ -454,7 +445,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
         return;
       }
       console.info(`Auto-commit: ${aheadCount} new commit(s) on ${remote}/${branch}`);
-      const { stdout: porcelain } = await this.execFileP(
+      const { stdout: porcelain } = await execFileAsync(
         "git",
         ["status", "--porcelain"],
         { cwd }
@@ -466,7 +457,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       this.setStatusPulling();
       console.info(`Auto-commit: merging ${remote}/${branch} (fast-forward only)`);
       try {
-        await this.execFileP("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
+        await execFileAsync("git", ["merge", "--ff-only", `${remote}/${branch}`], { cwd });
         console.info("Auto-commit: pull successful");
         this.setStatusPulledOk();
       } catch (err) {

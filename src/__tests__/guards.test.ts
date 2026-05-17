@@ -1,25 +1,21 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-vi.mock("node:fs", () => ({ existsSync: vi.fn() }));
-vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
+vi.mock("../node-apis", () => ({
+  execFileAsync: vi.fn(),
+  fsExistsSync: vi.fn(),
+  pathJoin: (...parts: string[]) => parts.join("/"),
+}));
 
-import { existsSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { execFileAsync, fsExistsSync } from "../node-apis";
 import { checkRepoGuards } from "../guards";
 
-const existsSyncMock = vi.mocked(existsSync);
-const execFileMock = vi.mocked(execFile);
-
-function makeExecFileOk() {
-  execFileMock.mockImplementation((_a: any, _b: any, _c: any, cb: any) =>
-    cb(null, { stdout: "refs/heads/main", stderr: "" })
-  );
-}
+const execFileAsyncMock = vi.mocked(execFileAsync);
+const fsExistsSyncMock = vi.mocked(fsExistsSync);
 
 beforeEach(() => {
   vi.resetAllMocks();
-  existsSyncMock.mockReturnValue(false);
-  makeExecFileOk();
+  fsExistsSyncMock.mockReturnValue(false);
+  execFileAsyncMock.mockResolvedValue({ stdout: "refs/heads/main", stderr: "" });
 });
 
 describe("checkRepoGuards", () => {
@@ -28,72 +24,37 @@ describe("checkRepoGuards", () => {
   });
 
   it("detects MERGE_HEAD", async () => {
-    existsSyncMock.mockImplementation((p) =>
-      String(p).endsWith(".git/MERGE_HEAD")
-    );
-    expect(await checkRepoGuards("/repo")).toEqual({
-      ok: false,
-      reason: "failedMerge",
-    });
+    fsExistsSyncMock.mockImplementation((p) => String(p).endsWith("MERGE_HEAD"));
+    expect(await checkRepoGuards("/repo")).toEqual({ ok: false, reason: "failedMerge" });
   });
 
   it("detects CHERRY_PICK_HEAD", async () => {
-    existsSyncMock.mockImplementation((p) =>
-      String(p).endsWith(".git/CHERRY_PICK_HEAD")
-    );
-    expect(await checkRepoGuards("/repo")).toEqual({
-      ok: false,
-      reason: "failedCherryPick",
-    });
+    fsExistsSyncMock.mockImplementation((p) => String(p).endsWith("CHERRY_PICK_HEAD"));
+    expect(await checkRepoGuards("/repo")).toEqual({ ok: false, reason: "failedCherryPick" });
   });
 
   it("detects REVERT_HEAD", async () => {
-    existsSyncMock.mockImplementation((p) =>
-      String(p).endsWith(".git/REVERT_HEAD")
-    );
-    expect(await checkRepoGuards("/repo")).toEqual({
-      ok: false,
-      reason: "failedRevert",
-    });
+    fsExistsSyncMock.mockImplementation((p) => String(p).endsWith("REVERT_HEAD"));
+    expect(await checkRepoGuards("/repo")).toEqual({ ok: false, reason: "failedRevert" });
   });
 
   it("detects BISECT_LOG", async () => {
-    existsSyncMock.mockImplementation((p) =>
-      String(p).endsWith(".git/BISECT_LOG")
-    );
-    expect(await checkRepoGuards("/repo")).toEqual({
-      ok: false,
-      reason: "failedBisect",
-    });
+    fsExistsSyncMock.mockImplementation((p) => String(p).endsWith("BISECT_LOG"));
+    expect(await checkRepoGuards("/repo")).toEqual({ ok: false, reason: "failedBisect" });
   });
 
   it("detects rebase-merge in progress", async () => {
-    existsSyncMock.mockImplementation((p) =>
-      String(p).endsWith(".git/rebase-merge")
-    );
-    expect(await checkRepoGuards("/repo")).toEqual({
-      ok: false,
-      reason: "failedRebase",
-    });
+    fsExistsSyncMock.mockImplementation((p) => String(p).endsWith("rebase-merge"));
+    expect(await checkRepoGuards("/repo")).toEqual({ ok: false, reason: "failedRebase" });
   });
 
   it("detects rebase-apply in progress", async () => {
-    existsSyncMock.mockImplementation((p) =>
-      String(p).endsWith(".git/rebase-apply")
-    );
-    expect(await checkRepoGuards("/repo")).toEqual({
-      ok: false,
-      reason: "failedRebase",
-    });
+    fsExistsSyncMock.mockImplementation((p) => String(p).endsWith("rebase-apply"));
+    expect(await checkRepoGuards("/repo")).toEqual({ ok: false, reason: "failedRebase" });
   });
 
   it("detects detached HEAD", async () => {
-    execFileMock.mockImplementation((_a: any, _b: any, _c: any, cb: any) =>
-      cb(new Error("fatal: ref HEAD is not a symbolic ref"))
-    );
-    expect(await checkRepoGuards("/repo")).toEqual({
-      ok: false,
-      reason: "failedDetached",
-    });
+    execFileAsyncMock.mockRejectedValueOnce(new Error("fatal: ref HEAD is not a symbolic ref"));
+    expect(await checkRepoGuards("/repo")).toEqual({ ok: false, reason: "failedDetached" });
   });
 });

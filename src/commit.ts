@@ -1,17 +1,15 @@
 import { Notice } from "obsidian";
 import type { TooltipKey } from "./tooltips";
 import { generateCommitMessage } from "./ai";
+import { execFileAsync } from "./node-apis";
 
 export async function createCommit(
   cwd: string,
   apiKey: string
 ): Promise<{ ok: false; reason: TooltipKey } | { ok: "noChanges" } | null> {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileP = promisify(execFile);
   let statusOut: string;
   try {
-    const { stdout } = await execFileP("git", ["status", "--porcelain"], { cwd });
+    const { stdout } = await execFileAsync("git", ["status", "--porcelain"], { cwd });
     statusOut = stdout;
   } catch (err) {
     console.error("Auto-commit: git status failed", err);
@@ -23,9 +21,9 @@ export async function createCommit(
   const changedFiles = statusOut.trim().split("\n").length;
   console.info(`Auto-commit: ${changedFiles} changed file(s), staging`);
 
-  await execFileP("git", ["add", "-A"], { cwd });
+  await execFileAsync("git", ["add", "-A"], { cwd });
 
-  const { stdout: diff } = await execFileP("git", ["diff", "--staged"], { cwd });
+  const { stdout: diff } = await execFileAsync("git", ["diff", "--staged"], { cwd });
   console.debug(`Auto-commit: staged diff size = ${diff.length} bytes`);
 
   if (diff.length > 50_000) {
@@ -51,7 +49,7 @@ export async function createCommit(
     return { ok: false, reason: "failedAi" };
   }
 
-  await execFileP("git", ["commit", "-m", message], { cwd });
+  await execFileAsync("git", ["commit", "-m", message], { cwd });
   console.info("Auto-commit: commit created");
   return null;
 }

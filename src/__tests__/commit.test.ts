@@ -1,24 +1,15 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("obsidian", () => ({ Notice: vi.fn() }));
-vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
+vi.mock("../node-apis", () => ({ execFileAsync: vi.fn() }));
 vi.mock("../ai", () => ({ generateCommitMessage: vi.fn() }));
 
-import { execFile } from "node:child_process";
+import { execFileAsync } from "../node-apis";
 import { generateCommitMessage } from "../ai";
 import { createCommit } from "../commit";
 
-const execFileMock = vi.mocked(execFile);
+const execFileAsyncMock = vi.mocked(execFileAsync);
 const generateCommitMessageMock = vi.mocked(generateCommitMessage);
-
-function execOk(stdout = "") {
-  return (_a: any, _b: any, _c: any, cb: any) =>
-    cb(null, { stdout, stderr: "" });
-}
-
-function execFail(msg = "git error") {
-  return (_a: any, _b: any, _c: any, cb: any) => cb(new Error(msg));
-}
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -26,62 +17,53 @@ beforeEach(() => {
 
 describe("createCommit", () => {
   it("returns failedGitStatus when git status fails", async () => {
-    execFileMock.mockImplementationOnce(execFail());
-    expect(await createCommit("/repo", "key")).toEqual({
-      ok: false,
-      reason: "failedGitStatus",
-    });
+    execFileAsyncMock.mockRejectedValueOnce(new Error("git error"));
+    expect(await createCommit("/repo", "key")).toEqual({ ok: false, reason: "failedGitStatus" });
   });
 
   it("returns noChanges when status output is empty", async () => {
-    execFileMock.mockImplementationOnce(execOk(""));
+    execFileAsyncMock.mockResolvedValueOnce({ stdout: "", stderr: "" });
     expect(await createCommit("/repo", "key")).toEqual({ ok: "noChanges" });
   });
 
   it("returns noChanges when status output is only whitespace", async () => {
-    execFileMock.mockImplementationOnce(execOk("   \n"));
+    execFileAsyncMock.mockResolvedValueOnce({ stdout: "   \n", stderr: "" });
     expect(await createCommit("/repo", "key")).toEqual({ ok: "noChanges" });
   });
 
   it("returns failedDiffTooLarge when diff exceeds 50 KB", async () => {
-    execFileMock
-      .mockImplementationOnce(execOk("M notes.md"))
-      .mockImplementationOnce(execOk(""))
-      .mockImplementationOnce(execOk("x".repeat(50_001)));
-    expect(await createCommit("/repo", "key")).toEqual({
-      ok: false,
-      reason: "failedDiffTooLarge",
-    });
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: "M notes.md", stderr: "" })  // status
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })             // add -A
+      .mockResolvedValueOnce({ stdout: "x".repeat(50_001), stderr: "" }); // diff
+    expect(await createCommit("/repo", "key")).toEqual({ ok: false, reason: "failedDiffTooLarge" });
   });
 
   it("returns failedAi when generateCommitMessage throws", async () => {
-    execFileMock
-      .mockImplementationOnce(execOk("M notes.md"))
-      .mockImplementationOnce(execOk(""))
-      .mockImplementationOnce(execOk("small diff"));
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: "M notes.md", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "small diff", stderr: "" });
     generateCommitMessageMock.mockRejectedValueOnce(new Error("AI down"));
-    expect(await createCommit("/repo", "key")).toEqual({
-      ok: false,
-      reason: "failedAi",
-    });
+    expect(await createCommit("/repo", "key")).toEqual({ ok: false, reason: "failedAi" });
   });
 
   it("returns null on successful commit", async () => {
-    execFileMock
-      .mockImplementationOnce(execOk("M notes.md"))
-      .mockImplementationOnce(execOk(""))
-      .mockImplementationOnce(execOk("small diff"))
-      .mockImplementationOnce(execOk(""));
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: "M notes.md", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "small diff", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
     generateCommitMessageMock.mockResolvedValueOnce("Add meeting notes");
     expect(await createCommit("/repo", "key")).toBeNull();
   });
 
   it("accepts a diff of exactly 50 KB", async () => {
-    execFileMock
-      .mockImplementationOnce(execOk("M notes.md"))
-      .mockImplementationOnce(execOk(""))
-      .mockImplementationOnce(execOk("x".repeat(50_000)))
-      .mockImplementationOnce(execOk(""));
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: "M notes.md", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "x".repeat(50_000), stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
     generateCommitMessageMock.mockResolvedValueOnce("Update notes");
     expect(await createCommit("/repo", "key")).toBeNull();
   });
