@@ -25,8 +25,18 @@ const rev = (s: string) => s.split("").reverse().join("");
 // btoa/atob only handle Latin-1, and commitStyle accepts any script (日本語, …).
 const toBase64 = (s: string) =>
   btoa(String.fromCharCode(...new TextEncoder().encode(s)));
-const fromBase64 = (s: string) =>
-  new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+
+// Data written before the UTF-8 encoding was introduced holds one Latin-1 byte per
+// character. Decoding it as UTF-8 would silently mangle accented branch and remote
+// names, so fall back to the exact inverse of the old encoding when UTF-8 rejects it.
+const fromBase64 = (s: string) => {
+  const bytes = Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return String.fromCharCode(...bytes);
+  }
+};
 
 export const obfuscate = (cfg: AutoCommitSettings): string =>
   rev(toBase64(JSON.stringify(cfg)));

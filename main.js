@@ -38,7 +38,14 @@ var DEFAULT_SETTINGS = {
 };
 var rev = (s) => s.split("").reverse().join("");
 var toBase64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
-var fromBase64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+var fromBase64 = (s) => {
+  const bytes = Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (e) {
+    return String.fromCharCode(...bytes);
+  }
+};
 var obfuscate = (cfg) => rev(toBase64(JSON.stringify(cfg)));
 var deobfuscate = (s) => JSON.parse(fromBase64(rev(s)));
 
@@ -167,9 +174,14 @@ async function createCommit(cwd, apiKey, commitStyle) {
     { cwd }
   );
   const payload = contentDiff ? contentDiff : (await execFileAsync("git", ["diff", "--staged", "--", ".obsidian/"], { cwd })).stdout;
-  console.debug(`Auto-commit: payload size = ${payload.length} bytes`);
-  if (payload.length > PAYLOAD_LIMIT) {
-    console.warn(`Auto-commit: payload too large (${payload.length} bytes), aborting`);
+  if (!payload) {
+    console.info("Auto-commit: nothing staged after add, skipping");
+    return { ok: "noChanges" };
+  }
+  const payloadBytes = new TextEncoder().encode(payload).length;
+  console.debug(`Auto-commit: payload size = ${payloadBytes} bytes`);
+  if (payloadBytes > PAYLOAD_LIMIT) {
+    console.warn(`Auto-commit: payload too large (${payloadBytes} bytes), aborting`);
     new import_obsidian2.Notice(
       "Auto-commit: diff exceeds 200 KB. Review and commit manually via terminal.",
       0

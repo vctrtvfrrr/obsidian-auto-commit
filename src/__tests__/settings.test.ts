@@ -20,6 +20,13 @@ describe("obfuscate / deobfuscate", () => {
     expect(deobfuscate(obfuscate(cfg))).toEqual(cfg);
   });
 
+  it("reads legacy Latin-1 data without mangling accented values", () => {
+    const cfg = { ...DEFAULT_SETTINGS, branch: "produção", remote: "origín" };
+    const legacyRev = (s: string) => s.split("").reverse().join("");
+    const legacy = legacyRev(btoa(JSON.stringify(cfg)));
+    expect(deobfuscate(legacy)).toEqual(cfg);
+  });
+
   it("obfuscate output differs from plain JSON", () => {
     const encoded = obfuscate(DEFAULT_SETTINGS);
     expect(encoded).not.toContain("inactivityMinutes");

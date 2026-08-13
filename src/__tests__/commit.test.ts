@@ -68,6 +68,27 @@ describe("createCommit", () => {
     expect(await createCommit("/repo", "key", "style")).toBeNull();
   });
 
+  it("measures the limit in UTF-8 bytes, not UTF-16 units", async () => {
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: "M notes.md", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "日".repeat(100_000), stderr: "" }); // 300 KB in UTF-8
+    expect(await createCommit("/repo", "key", "style")).toEqual({
+      ok: false,
+      reason: "failedDiffTooLarge",
+    });
+  });
+
+  it("returns noChanges when nothing is staged after add", async () => {
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: "M submodule", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })  // no diff outside .obsidian/
+      .mockResolvedValueOnce({ stdout: "", stderr: "" }); // and none inside it either
+    expect(await createCommit("/repo", "key", "style")).toEqual({ ok: "noChanges" });
+    expect(generateCommitMessageMock).not.toHaveBeenCalled();
+  });
+
   it("excludes .obsidian/ from the payload sent to the AI", async () => {
     execFileAsyncMock
       .mockResolvedValueOnce({ stdout: "M notes.md", stderr: "" })

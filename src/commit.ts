@@ -35,10 +35,18 @@ export async function createCommit(
   const payload = contentDiff
     ? contentDiff
     : (await execFileAsync("git", ["diff", "--staged", "--", ".obsidian/"], { cwd })).stdout;
-  console.debug(`Auto-commit: payload size = ${payload.length} bytes`);
+  // `git status` also reports changes `git add -A` cannot stage — a submodule with a
+  // dirty worktree, for one. Nothing staged means nothing to commit.
+  if (!payload) {
+    console.info("Auto-commit: nothing staged after add, skipping");
+    return { ok: "noChanges" };
+  }
 
-  if (payload.length > PAYLOAD_LIMIT) {
-    console.warn(`Auto-commit: payload too large (${payload.length} bytes), aborting`);
+  const payloadBytes = new TextEncoder().encode(payload).length;
+  console.debug(`Auto-commit: payload size = ${payloadBytes} bytes`);
+
+  if (payloadBytes > PAYLOAD_LIMIT) {
+    console.warn(`Auto-commit: payload too large (${payloadBytes} bytes), aborting`);
     new Notice(
       "Auto-commit: diff exceeds 200 KB. Review and commit manually via terminal.",
       0
