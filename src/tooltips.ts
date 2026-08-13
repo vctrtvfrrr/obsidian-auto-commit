@@ -18,7 +18,7 @@ export const TOOLTIPS = {
   failedDetached:
     "The repository is in detached HEAD state. Check out a branch before auto-sync.",
   failedDiffTooLarge:
-    "The diff exceeded the 50 KB limit. Review and commit manually.",
+    "The diff exceeded the 200 KB limit. Review and commit manually.",
   failedAi:
     "Could not generate the commit message with AI. Changes remain staged.",
   failedRebaseConflict:

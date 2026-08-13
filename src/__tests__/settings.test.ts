@@ -15,6 +15,7 @@ describe("obfuscate / deobfuscate", () => {
       remote: "upstream",
       pushEnabled: false,
       anthropicApiKey: "sk-test-key",
+      commitStyle: "日本語",
     };
     expect(deobfuscate(obfuscate(cfg))).toEqual(cfg);
   });
@@ -32,6 +33,7 @@ describe("obfuscate / deobfuscate", () => {
       remote: "origin",
       pushEnabled: true,
       anthropicApiKey: "",
+      commitStyle: "English (US), imperative mode",
     };
     const encoded = obfuscate(cfg);
     const decoded = deobfuscate(encoded);

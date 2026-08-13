@@ -9,6 +9,7 @@ import {
 } from "obsidian";
 import {
   type AutoCommitSettings,
+  DEFAULT_COMMIT_STYLE,
   DEFAULT_SETTINGS,
   deobfuscate,
   obfuscate,
@@ -192,7 +193,11 @@ export default class AutoCommitPlugin extends Plugin {
     const guardResult = await checkRepoGuards(cwd);
     if (guardResult !== null) return guardResult;
 
-    const commitResult = await createCommit(cwd, this.settings.anthropicApiKey);
+    const commitResult = await createCommit(
+      cwd,
+      this.settings.anthropicApiKey,
+      this.settings.commitStyle
+    );
     if (commitResult !== null) return commitResult;
 
     if (!this.settings.pushEnabled) {
@@ -407,6 +412,21 @@ class AutoCommitSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.pushEnabled)
           .onChange(async (value) => {
             this.plugin.settings.pushEnabled = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Commit message style")
+      .setDesc(
+        "Language and writing style for generated commit messages. Free prose — leave empty to fall back to the default."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_COMMIT_STYLE)
+          .setValue(this.plugin.settings.commitStyle)
+          .onChange(async (value) => {
+            this.plugin.settings.commitStyle = value.trim();
             await this.plugin.saveSettings();
           })
       );

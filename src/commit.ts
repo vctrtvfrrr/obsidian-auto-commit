@@ -3,9 +3,12 @@ import type { TooltipKey } from "./tooltips";
 import { generateCommitMessage } from "./ai";
 import { execFileAsync } from "./node-apis";
 
+const PAYLOAD_LIMIT = 200_000;
+
 export async function createCommit(
   cwd: string,
-  apiKey: string
+  apiKey: string,
+  commitStyle: string
 ): Promise<{ ok: false; reason: TooltipKey } | { ok: "noChanges" } | null> {
   let statusOut: string;
   try {
@@ -23,13 +26,21 @@ export async function createCommit(
 
   await execFileAsync("git", ["add", "-A"], { cwd });
 
-  const { stdout: diff } = await execFileAsync("git", ["diff", "--staged"], { cwd });
-  console.debug(`Auto-commit: staged diff size = ${diff.length} bytes`);
+  const { stdout: contentDiff } = await execFileAsync(
+    "git",
+    ["diff", "--staged", "--", ":(exclude,top).obsidian/"],
+    { cwd }
+  );
+  // Only `.obsidian/` changed: fall back to it so the message still describes something.
+  const payload = contentDiff
+    ? contentDiff
+    : (await execFileAsync("git", ["diff", "--staged", "--", ".obsidian/"], { cwd })).stdout;
+  console.debug(`Auto-commit: payload size = ${payload.length} bytes`);
 
-  if (diff.length > 50_000) {
-    console.warn(`Auto-commit: diff too large (${diff.length} bytes), aborting`);
+  if (payload.length > PAYLOAD_LIMIT) {
+    console.warn(`Auto-commit: payload too large (${payload.length} bytes), aborting`);
     new Notice(
-      "Auto-commit: diff exceeds 50 KB. Review and commit manually via terminal.",
+      "Auto-commit: diff exceeds 200 KB. Review and commit manually via terminal.",
       0
     );
     return { ok: false, reason: "failedDiffTooLarge" };
@@ -38,7 +49,7 @@ export async function createCommit(
   let message: string;
   console.debug("Auto-commit: requesting commit message from AI");
   try {
-    message = await generateCommitMessage(diff, apiKey);
+    message = await generateCommitMessage(payload, apiKey, commitStyle);
     console.info(`Auto-commit: AI message — "${message}"`);
   } catch (err) {
     new Notice(

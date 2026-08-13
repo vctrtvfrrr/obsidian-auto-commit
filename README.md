@@ -49,7 +49,20 @@ Open **Settings → Auto Commit**:
 | Branch                        | _(current branch)_ | Branch to push to; leave empty to use the current branch |
 | Remote                        | `origin`           | Git remote name                                          |
 | Push after commit             | on                 | Automatically push after each commit                     |
+| Commit message style          | `English (US), imperative mode` | Language and writing style of generated messages |
 | Anthropic API key             | —                  | API key used to generate commit messages                 |
+
+### Commit message style
+
+Free prose, not a locale code — write `日本語`, `English (US), imperative mode`, or `Português Brasileiro no tempo presente do indicativo`. The text is injected into the prompt and governs language and wording only. Leave it empty to fall back to `English (US), imperative mode`.
+
+The structure of the message is fixed by the plugin and always wins over this field: a subject of up to 80 characters, an optional body separated by a blank line and hard wrapped at 80 columns, no conventional commit prefixes.
+
+### What the AI sees
+
+Changes under `.obsidian/` are excluded from the diff sent to the AI, because Obsidian rewrites those files on every session and the noise both crowds out the real changes and blows the size limit. They are still committed normally.
+
+When `.obsidian/` is the only thing that changed, it becomes the diff sent to the AI, so the commit still gets a description — a short one, without a body.
 
 Settings are stored obfuscated in `.obsidian/plugins/obsidian-auto-commit/data.json` to avoid leaking the API key through Git diffs.
 
@@ -61,7 +74,7 @@ The command **Auto Commit: Run now** (accessible via the command palette) trigge
 
 - **Special repo state** (merge, rebase, cherry-pick, bisect, detached HEAD): skipped silently.
 - **No changes**: no-op.
-- **Diff > 50 KB**: aborted with a persistent notice; no commit is created.
+- **Diff sent to the AI > 200 KB**: aborted with a persistent notice; no commit is created and everything remains staged. The diff is never truncated.
 - **AI unavailable**: aborted with a persistent notice; staged changes remain for the next cycle or manual commit.
 - **Rebase conflict on push**: rebase is aborted, local commit is preserved, persistent notice shown.
 - **Push failure**: local commit is kept; next cycle will retry the push.

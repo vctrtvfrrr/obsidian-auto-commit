@@ -26,17 +26,21 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian4 = require("obsidian");
 
 // src/settings.ts
+var DEFAULT_COMMIT_STYLE = "English (US), imperative mode";
 var DEFAULT_SETTINGS = {
   inactivityMinutes: 15,
   fetchIntervalMinutes: 5,
   branch: "",
   remote: "origin",
   pushEnabled: true,
-  anthropicApiKey: ""
+  anthropicApiKey: "",
+  commitStyle: DEFAULT_COMMIT_STYLE
 };
 var rev = (s) => s.split("").reverse().join("");
-var obfuscate = (cfg) => rev(btoa(JSON.stringify(cfg)));
-var deobfuscate = (s) => JSON.parse(atob(rev(s)));
+var toBase64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+var fromBase64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+var obfuscate = (cfg) => rev(toBase64(JSON.stringify(cfg)));
+var deobfuscate = (s) => JSON.parse(fromBase64(rev(s)));
 
 // src/tooltips.ts
 var TOOLTIPS = {
@@ -52,7 +56,7 @@ var TOOLTIPS = {
   failedBisect: "A bisect is in progress. Finish or abort it before auto-sync.",
   failedRebase: "A rebase is in progress. Complete or abort it manually before auto-sync.",
   failedDetached: "The repository is in detached HEAD state. Check out a branch before auto-sync.",
-  failedDiffTooLarge: "The diff exceeded the 50 KB limit. Review and commit manually.",
+  failedDiffTooLarge: "The diff exceeded the 200 KB limit. Review and commit manually.",
   failedAi: "Could not generate the commit message with AI. Changes remain staged.",
   failedRebaseConflict: "Conflict while updating from remote; rebase was aborted. Resolve manually.",
   failedPush: "Push failed after local commit. Check credentials, network, and remote permissions.",
@@ -110,7 +114,8 @@ var import_obsidian2 = require("obsidian");
 
 // src/ai.ts
 var import_obsidian = require("obsidian");
-async function callAnthropicApi(prompt, apiKey) {
+var STRUCTURAL_RULES = 'You generate commit messages for a vault in Obsidian. These structural rules are absolute and override any conflicting style instruction below:\n- A subject line of up to 80 characters.\n- An optional body, separated from the subject by a blank line, hard wrapped at 80 columns, with an unlimited number of lines. Omit the body when the change is trivial.\n- No conventional commit prefixes (no "feat:", "docs:", etc.).\n- Describe what changed concretely, citing files or areas when useful. Backticks around file and directory names are allowed.\n- If there are many heterogeneous changes, summarize the dominant theme.\n- When the diff contains only `.obsidian/` changes, describe them coarsely (theme, hotkeys, plugin configuration) in a subject line only, with no body.\n- Output the message alone: no code fences, no decorative quotation marks, no preamble such as "Message:".';
+async function callAnthropicApi(prompt, apiKey, commitStyle) {
   const req = {
     url: "https://api.anthropic.com/v1/messages",
     method: "POST",
@@ -121,9 +126,9 @@ async function callAnthropicApi(prompt, apiKey) {
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 100,
+      max_tokens: 1024,
       temperature: 0.2,
-      system: 'You generate commit messages in English (US), in imperative mode, for a vault in Obsidian. Rules:\n- A single line of up to 72 characters.\n- No conventional prefixes (no "feat:", "docs:", etc.).\n- Describe what changed concretely, citing files or areas when useful.\n- If there are many heterogeneous changes, summarize the dominant theme.\n- Any changes to the `.obsidian/` directory should not be detailed, only mentioned.\n- Do not use quotation marks, backticks, or special characters. Just the message, without prefixes like "Message:" or explanatory text.',
+      system: STRUCTURAL_RULES + "\n\nWrite the message in the following language and writing style:\n" + commitStyle,
       messages: [{ role: "user", content: prompt }]
     }),
     throw: false
@@ -137,12 +142,13 @@ async function callAnthropicApi(prompt, apiKey) {
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
   return res.json.content[0].text.trim();
 }
-async function generateCommitMessage(diff, apiKey) {
-  return callAnthropicApi(diff, apiKey);
+async function generateCommitMessage(diff, apiKey, commitStyle) {
+  return callAnthropicApi(diff, apiKey, commitStyle || DEFAULT_COMMIT_STYLE);
 }
 
 // src/commit.ts
-async function createCommit(cwd, apiKey) {
+var PAYLOAD_LIMIT = 2e5;
+async function createCommit(cwd, apiKey, commitStyle) {
   let statusOut;
   try {
     const { stdout } = await execFileAsync("git", ["status", "--porcelain"], { cwd });
@@ -155,12 +161,17 @@ async function createCommit(cwd, apiKey) {
   const changedFiles = statusOut.trim().split("\n").length;
   console.info(`Auto-commit: ${changedFiles} changed file(s), staging`);
   await execFileAsync("git", ["add", "-A"], { cwd });
-  const { stdout: diff } = await execFileAsync("git", ["diff", "--staged"], { cwd });
-  console.debug(`Auto-commit: staged diff size = ${diff.length} bytes`);
-  if (diff.length > 5e4) {
-    console.warn(`Auto-commit: diff too large (${diff.length} bytes), aborting`);
+  const { stdout: contentDiff } = await execFileAsync(
+    "git",
+    ["diff", "--staged", "--", ":(exclude,top).obsidian/"],
+    { cwd }
+  );
+  const payload = contentDiff ? contentDiff : (await execFileAsync("git", ["diff", "--staged", "--", ".obsidian/"], { cwd })).stdout;
+  console.debug(`Auto-commit: payload size = ${payload.length} bytes`);
+  if (payload.length > PAYLOAD_LIMIT) {
+    console.warn(`Auto-commit: payload too large (${payload.length} bytes), aborting`);
     new import_obsidian2.Notice(
-      "Auto-commit: diff exceeds 50 KB. Review and commit manually via terminal.",
+      "Auto-commit: diff exceeds 200 KB. Review and commit manually via terminal.",
       0
     );
     return { ok: false, reason: "failedDiffTooLarge" };
@@ -168,7 +179,7 @@ async function createCommit(cwd, apiKey) {
   let message;
   console.debug("Auto-commit: requesting commit message from AI");
   try {
-    message = await generateCommitMessage(diff, apiKey);
+    message = await generateCommitMessage(payload, apiKey, commitStyle);
     console.info(`Auto-commit: AI message \u2014 "${message}"`);
   } catch (err) {
     new import_obsidian2.Notice(
@@ -379,7 +390,11 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     const cwd = this.getVaultPath();
     const guardResult = await checkRepoGuards(cwd);
     if (guardResult !== null) return guardResult;
-    const commitResult = await createCommit(cwd, this.settings.anthropicApiKey);
+    const commitResult = await createCommit(
+      cwd,
+      this.settings.anthropicApiKey,
+      this.settings.commitStyle
+    );
     if (commitResult !== null) return commitResult;
     if (!this.settings.pushEnabled) {
       console.info("Auto-commit: push disabled, skipping remote sync");
@@ -535,6 +550,14 @@ var AutoCommitSettingTab = class extends import_obsidian4.PluginSettingTab {
     new import_obsidian4.Setting(containerEl).setName("Push after commit").setDesc("Automatically push after each commit.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.pushEnabled).onChange(async (value) => {
         this.plugin.settings.pushEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Commit message style").setDesc(
+      "Language and writing style for generated commit messages. Free prose \u2014 leave empty to fall back to the default."
+    ).addText(
+      (text) => text.setPlaceholder(DEFAULT_COMMIT_STYLE).setValue(this.plugin.settings.commitStyle).onChange(async (value) => {
+        this.plugin.settings.commitStyle = value.trim();
         await this.plugin.saveSettings();
       })
     );
