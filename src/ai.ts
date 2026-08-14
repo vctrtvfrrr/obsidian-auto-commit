@@ -4,7 +4,10 @@ import { DEFAULT_COMMIT_STYLE } from "./settings";
 const STRUCTURAL_RULES =
   "You generate commit messages for a vault in Obsidian. These structural rules are " +
   "absolute and override any conflicting style instruction below:\n" +
-  "- A subject line of up to 80 characters.\n" +
+  "- No line anywhere in the message may exceed 80 characters.\n" +
+  "- A subject line. Aim for about 60 characters and never write up to the 80 character " +
+  "limit — a subject that fills the line is too long. When the detail does not fit, move " +
+  "it into the body instead of extending the subject.\n" +
   "- An optional body, separated from the subject by a blank line, hard wrapped at 80 " +
   "columns, with an unlimited number of lines. Omit the body when the change is trivial.\n" +
   "- No conventional commit prefixes (no \"feat:\", \"docs:\", etc.).\n" +
