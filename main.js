@@ -172,9 +172,9 @@ var import_obsidian2 = require("obsidian");
 // src/ai.ts
 var import_obsidian = require("obsidian");
 var OUTPUT_CONTRACT = 'Your entire response is the commit message and nothing else. No code fences, no decorative quotation marks, no preamble such as "Message:", no commentary before or after the message.';
-var MAX_TOKENS = 8192;
+var MAX_TOKENS = 64e3;
 async function callAnthropicApi(diff, ai) {
-  var _a, _b;
+  var _a, _b, _c;
   const model = (_a = findModel(ai.model)) != null ? _a : findModel(DEFAULT_MODEL);
   const payload = {
     model: model.id,
@@ -202,10 +202,16 @@ async function callAnthropicApi(diff, ai) {
   const res = await Promise.race([(0, import_obsidian.requestUrl)(req), timeout]);
   console.debug(`Auto-commit: Anthropic API responded with status ${res.status}`);
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
-  const blocks = (_b = res.json) == null ? void 0 : _b.content;
+  const stopReason = (_b = res.json) == null ? void 0 : _b.stop_reason;
+  if (stopReason !== "end_turn") {
+    throw new Error(`incomplete response (stop_reason: ${String(stopReason)})`);
+  }
+  const blocks = (_c = res.json) == null ? void 0 : _c.content;
   const text = Array.isArray(blocks) ? blocks.find((b) => (b == null ? void 0 : b.type) === "text") : void 0;
   if (typeof (text == null ? void 0 : text.text) !== "string") throw new Error("no text block in response");
-  return text.text.trim();
+  const message = text.text.trim();
+  if (!message) throw new Error("empty message in response");
+  return message;
 }
 async function generateCommitMessage(diff, ai) {
   return callAnthropicApi(diff, ai);

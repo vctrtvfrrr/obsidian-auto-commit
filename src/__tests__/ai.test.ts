@@ -18,8 +18,11 @@ const ai = (overrides: Partial<AiConfig> = {}): AiConfig => ({
   ...overrides,
 });
 
-function mockResponse(status: number, content: unknown) {
-  requestUrlMock.mockResolvedValueOnce({ status, json: { content } } as any);
+function mockResponse(status: number, content: unknown, stopReason = "end_turn") {
+  requestUrlMock.mockResolvedValueOnce({
+    status,
+    json: { content, stop_reason: stopReason },
+  } as any);
 }
 
 function mockText(status: number, text: string) {
@@ -60,11 +63,11 @@ describe("generateCommitMessage", () => {
     expect(system).toMatch(/^Your entire response is the commit message/);
   });
 
-  it("sends max_tokens of 8192 and never a temperature", async () => {
+  it("sends max_tokens of 64000 and never a temperature", async () => {
     mockText(200, "Add meeting notes");
     await generateCommitMessage("diff", ai());
     const body = sentBody();
-    expect(body.max_tokens).toBe(8192);
+    expect(body.max_tokens).toBe(64_000);
     expect(body).not.toHaveProperty("temperature");
   });
 
@@ -102,6 +105,27 @@ describe("generateCommitMessage", () => {
     ]);
     expect(await generateCommitMessage("diff", ai({ model: "claude-opus-5" }))).toBe(
       "Add meeting notes"
+    );
+  });
+
+  it("throws when the turn was cut short by max_tokens", async () => {
+    mockResponse(200, [{ type: "text", text: "Add meeting no" }], "max_tokens");
+    await expect(generateCommitMessage("diff", ai())).rejects.toThrow(
+      "incomplete response"
+    );
+  });
+
+  it("throws when the model refused instead of finishing the turn", async () => {
+    mockResponse(200, [{ type: "text", text: "I cannot help" }], "refusal");
+    await expect(generateCommitMessage("diff", ai())).rejects.toThrow(
+      "incomplete response"
+    );
+  });
+
+  it("throws when the text block is empty after trimming", async () => {
+    mockResponse(200, [{ type: "text", text: "   \n  " }]);
+    await expect(generateCommitMessage("diff", ai())).rejects.toThrow(
+      "empty message in response"
     );
   });
 

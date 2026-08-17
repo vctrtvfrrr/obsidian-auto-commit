@@ -9,7 +9,11 @@ const OUTPUT_CONTRACT =
   "decorative quotation marks, no preamble such as \"Message:\", no commentary before " +
   "or after the message.";
 
-const MAX_TOKENS = 8192;
+// A ceiling, not a target: it bounds thinking plus the message together, and at
+// effort `xhigh` or `max` reasoning alone can outrun a tight budget and truncate the
+// message. Unused headroom costs nothing — billing is per token actually produced —
+// and the 60 s timeout below is what really bounds latency.
+const MAX_TOKENS = 64_000;
 
 async function callAnthropicApi(diff: string, ai: AiConfig): Promise<string> {
   const model = findModel(ai.model) ?? findModel(DEFAULT_MODEL)!;
@@ -45,6 +49,16 @@ async function callAnthropicApi(diff: string, ai: AiConfig): Promise<string> {
 
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
 
+  // Anything other than a turn the model finished on its own is a partial answer:
+  // `max_tokens` bounds thinking plus text together, so a long reasoning pass can
+  // leave a truncated message behind. Committing that would write a message that
+  // describes less than the commit contains — the same reason ADR-0001 refuses to
+  // truncate the payload.
+  const stopReason: unknown = res.json?.stop_reason;
+  if (stopReason !== "end_turn") {
+    throw new Error(`incomplete response (stop_reason: ${String(stopReason)})`);
+  }
+
   // With thinking enabled the response opens with thinking blocks, so the message is
   // not necessarily at index 0.
   const blocks: unknown = res.json?.content;
@@ -53,7 +67,10 @@ async function callAnthropicApi(diff: string, ai: AiConfig): Promise<string> {
     : undefined;
   if (typeof text?.text !== "string") throw new Error("no text block in response");
 
-  return (text.text as string).trim();
+  const message = (text.text as string).trim();
+  if (!message) throw new Error("empty message in response");
+
+  return message;
 }
 
 export async function generateCommitMessage(

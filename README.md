@@ -93,6 +93,7 @@ The command **Auto Commit: Run now** (accessible via the command palette) trigge
 - **No changes**: no-op.
 - **Diff sent to the AI > 200 KB**: aborted with a persistent notice; no commit is created and everything remains staged. The diff is never truncated.
 - **AI unavailable**: aborted with a persistent notice; staged changes remain for the next cycle or manual commit.
+- **Incomplete AI response** (cut short by the token budget, or a refusal): treated the same way — no commit is created, changes remain staged. A truncated message is never committed.
 - **Rebase conflict on push**: rebase is aborted, local commit is preserved, persistent notice shown.
 - **Push failure**: local commit is kept; next cycle will retry the push.
 - **Concurrent runs**: if a commit is already in progress, the new trigger is ignored.
