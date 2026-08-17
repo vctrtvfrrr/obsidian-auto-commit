@@ -7,7 +7,7 @@ vi.mock("../node-apis", () => ({
 }));
 
 import { execFileAsync, fsExistsSync } from "../node-apis";
-import { checkRepoGuards } from "../guards";
+import { checkPromptGuard, checkRepoGuards } from "../guards";
 
 const execFileAsyncMock = vi.mocked(execFileAsync);
 const fsExistsSyncMock = vi.mocked(fsExistsSync);
@@ -16,6 +16,28 @@ beforeEach(() => {
   vi.resetAllMocks();
   fsExistsSyncMock.mockReturnValue(false);
   execFileAsyncMock.mockResolvedValue({ stdout: "refs/heads/main", stderr: "" });
+});
+
+describe("checkPromptGuard", () => {
+  it("returns failedEmptyPrompt for an empty prompt", () => {
+    expect(checkPromptGuard("")).toEqual({ ok: false, reason: "failedEmptyPrompt" });
+  });
+
+  it("returns failedEmptyPrompt for a whitespace-only prompt", () => {
+    expect(checkPromptGuard("  \n\t ")).toEqual({
+      ok: false,
+      reason: "failedEmptyPrompt",
+    });
+  });
+
+  it("runs no Git command — nothing may be staged before this check passes", () => {
+    checkPromptGuard("");
+    expect(execFileAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("returns null for a filled prompt", () => {
+    expect(checkPromptGuard("Write in English (US).")).toBeNull();
+  });
 });
 
 describe("checkRepoGuards", () => {

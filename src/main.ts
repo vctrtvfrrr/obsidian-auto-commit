@@ -8,14 +8,20 @@ import {
   Setting,
 } from "obsidian";
 import {
+  type AiConfig,
   type AutoCommitSettings,
-  DEFAULT_COMMIT_STYLE,
+  type Effort,
+  DEFAULT_PROMPT,
   DEFAULT_SETTINGS,
+  EFFORT_LEVELS,
+  SUPPORTED_MODELS,
   deobfuscate,
+  findModel,
+  normalizeSettings,
   obfuscate,
 } from "./settings";
 import { TOOLTIPS, type TooltipKey, type SyncResult } from "./tooltips";
-import { checkRepoGuards } from "./guards";
+import { checkPromptGuard, checkRepoGuards } from "./guards";
 import { createCommit } from "./commit";
 import { syncRemote } from "./remote";
 import { execFileAsync } from "./node-apis";
@@ -187,17 +193,25 @@ export default class AutoCommitPlugin extends Plugin {
     }
   }
 
+  private aiConfig(): AiConfig {
+    return {
+      anthropicApiKey: this.settings.anthropicApiKey,
+      prompt: this.settings.prompt,
+      model: this.settings.model,
+      effort: this.settings.effort,
+    };
+  }
+
   private async doCommit(): Promise<SyncResult> {
     const cwd = this.getVaultPath();
+
+    const promptResult = checkPromptGuard(this.settings.prompt);
+    if (promptResult !== null) return promptResult;
 
     const guardResult = await checkRepoGuards(cwd);
     if (guardResult !== null) return guardResult;
 
-    const commitResult = await createCommit(
-      cwd,
-      this.settings.anthropicApiKey,
-      this.settings.commitStyle
-    );
+    const commitResult = await createCommit(cwd, this.aiConfig());
     if (commitResult !== null) return commitResult;
 
     if (!this.settings.pushEnabled) {
@@ -314,7 +328,7 @@ export default class AutoCommitPlugin extends Plugin {
     }
     if (raw.d) {
       try {
-        this.settings = { ...DEFAULT_SETTINGS, ...deobfuscate(raw.d) };
+        this.settings = normalizeSettings({ ...DEFAULT_SETTINGS, ...deobfuscate(raw.d) });
         return;
       } catch {
         console.warn("Auto-commit: failed to deserialize settings, using defaults");
@@ -324,7 +338,7 @@ export default class AutoCommitPlugin extends Plugin {
     }
     // Migration: raw fields from old format
     console.info("Auto-commit: migrating settings from legacy format");
-    this.settings = { ...DEFAULT_SETTINGS, ...raw };
+    this.settings = normalizeSettings({ ...DEFAULT_SETTINGS, ...raw });
     await this.saveSettings();
   }
 
@@ -416,20 +430,58 @@ class AutoCommitSettingTab extends PluginSettingTab {
           })
       );
 
+    const model = findModel(this.plugin.settings.model);
+
     new Setting(containerEl)
-      .setName("Commit message style")
-      .setDesc(
-        "Language and writing style for generated commit messages. Free prose — leave empty to fall back to the default."
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder(DEFAULT_COMMIT_STYLE)
-          .setValue(this.plugin.settings.commitStyle)
+      .setName("Model")
+      .setDesc("Anthropic model used to write commit messages.")
+      .addDropdown((dropdown) => {
+        for (const m of SUPPORTED_MODELS) dropdown.addOption(m.id, m.label);
+        dropdown
+          .setValue(this.plugin.settings.model)
           .onChange(async (value) => {
-            this.plugin.settings.commitStyle = value.trim();
+            this.plugin.settings.model = value;
             await this.plugin.saveSettings();
-          })
-      );
+            // The effort field is enabled or disabled by the selected model.
+            this.display();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Effort")
+      .setDesc(
+        model?.supportsEffort
+          ? "How much the model reasons before writing the message."
+          : "Not available on the selected model. Choose Sonnet 5 or Opus 5 to enable it."
+      )
+      .addDropdown((dropdown) => {
+        for (const level of EFFORT_LEVELS) dropdown.addOption(level, level);
+        dropdown
+          .setValue(this.plugin.settings.effort)
+          .setDisabled(!model?.supportsEffort)
+          .onChange(async (value) => {
+            this.plugin.settings.effort = value as Effort;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Prompt")
+      .setDesc(
+        "Full instructions for the commit message — language, style, columns, format. Required: with no prompt there is no commit."
+      )
+      .addTextArea((text) => {
+        text.inputEl.rows = 12;
+        text
+          .setPlaceholder(DEFAULT_PROMPT)
+          .setValue(this.plugin.settings.prompt)
+          .onChange(async (value) => {
+            // Persist the empty value too — the field is mandatory and clearing it
+            // has to reach the guard.
+            this.plugin.settings.prompt = value.trim();
+            await this.plugin.saveSettings();
+          });
+      });
 
     new Setting(containerEl)
       .setName("Anthropic API key")

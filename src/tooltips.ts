@@ -21,6 +21,8 @@ export const TOOLTIPS = {
     "The diff exceeded the 200 KB limit. Review and commit manually.",
   failedAi:
     "Could not generate the commit message with AI. Changes remain staged.",
+  failedEmptyPrompt:
+    "The commit message prompt is empty. Set it in the plugin settings to enable auto-commit.",
   failedRebaseConflict:
     "Conflict while updating from remote; rebase was aborted. Resolve manually.",
   failedPush:

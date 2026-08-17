@@ -49,14 +49,30 @@ Open **Settings → Auto Commit**:
 | Branch                        | _(current branch)_ | Branch to push to; leave empty to use the current branch |
 | Remote                        | `origin`           | Git remote name                                          |
 | Push after commit             | on                 | Automatically push after each commit                     |
-| Commit message style          | `English (US), imperative mode` | Language and writing style of generated messages |
+| Model                         | Claude Haiku 4.5   | Anthropic model used to write commit messages            |
+| Effort                        | `low`              | How much the model reasons before writing; Sonnet 5 and Opus 5 only |
+| Prompt                        | _(empty)_          | **Required.** Full instructions for the commit message   |
 | Anthropic API key             | —                  | API key used to generate commit messages                 |
 
-### Commit message style
+### Prompt
 
-Free prose, not a locale code — write `日本語`, `English (US), imperative mode`, or `Português Brasileiro no tempo presente do indicativo`. The text is injected into the prompt and governs language and wording only. Leave it empty to fall back to `English (US), imperative mode`.
+**The prompt is mandatory: with no prompt there is no commit.** A fresh install — and an upgrade from 1.5.x — starts blocked, showing a failure icon and a tooltip in the status bar until you write one. This is deliberate: the old commit message style field held a line of style, not a prompt, so its value is discarded rather than turned into a half-baked prompt.
 
-The structure of the message is fixed by the plugin and always wins over this field: a subject of up to 80 characters, an optional body separated by a blank line and hard wrapped at 80 columns, no conventional commit prefixes.
+The prompt carries everything about the content of the message — language, writing style, column limits, subject format, whether a body is required, whether to use Conventional Commits. The settings field shows a suggested prompt as a placeholder; copy it and edit, or write your own. That placeholder is never saved and is never used as a fallback.
+
+The plugin keeps exactly one rule for itself: the model's response is the commit message and nothing else, with no code fences, no decorative quotation marks and no preamble. That is not style — the response goes straight into `git commit -m`, so a code fence would land literally in your history. See [ADR-0002](docs/adr/0002-model-and-prompt-are-user-configuration.md).
+
+### Model and effort
+
+| Model            | Trade-off                          | Effort |
+| ---------------- | ---------------------------------- | ------ |
+| Claude Haiku 4.5 | Fastest and cheapest (default)     | Not supported |
+| Claude Sonnet 5  | Better instruction following       | Supported |
+| Claude Opus 5    | Highest quality, most expensive    | Supported |
+
+Haiku 4.5 stays the default so that upgrading never raises your bill without asking. It does not reliably respect a subject column limit, though — if that bothers you, pick Sonnet 5 or Opus 5.
+
+Effort (`low` through `max`) controls how much the model reasons before writing. The field is disabled on Haiku 4.5, which does not accept the parameter.
 
 ### What the AI sees
 
@@ -72,6 +88,7 @@ The command **Auto Commit: Run now** (accessible via the command palette) trigge
 
 ## Edge cases
 
+- **Empty prompt**: no Git command runs at all — nothing is staged. Shown as a failure icon and tooltip in the status bar, with no popup.
 - **Special repo state** (merge, rebase, cherry-pick, bisect, detached HEAD): skipped silently.
 - **No changes**: no-op.
 - **Diff sent to the AI > 200 KB**: aborted with a persistent notice; no commit is created and everything remains staged. The diff is never truncated.

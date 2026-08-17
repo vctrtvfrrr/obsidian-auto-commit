@@ -1,5 +1,6 @@
 import { Notice } from "obsidian";
 import type { TooltipKey } from "./tooltips";
+import type { AiConfig } from "./settings";
 import { generateCommitMessage } from "./ai";
 import { execFileAsync } from "./node-apis";
 
@@ -7,8 +8,7 @@ const PAYLOAD_LIMIT = 200_000;
 
 export async function createCommit(
   cwd: string,
-  apiKey: string,
-  commitStyle: string
+  ai: AiConfig
 ): Promise<{ ok: false; reason: TooltipKey } | { ok: "noChanges" } | null> {
   let statusOut: string;
   try {
@@ -57,7 +57,7 @@ export async function createCommit(
   let message: string;
   console.debug("Auto-commit: requesting commit message from AI");
   try {
-    message = await generateCommitMessage(payload, apiKey, commitStyle);
+    message = await generateCommitMessage(payload, ai);
     console.info(`Auto-commit: AI message — "${message}"`);
   } catch (err) {
     new Notice(

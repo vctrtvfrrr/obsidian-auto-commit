@@ -10,10 +10,14 @@ Everything Git has staged and that will go into the commit. Always complete — 
 
 The subset of the staged diff sent to the Anthropic API to generate a commit message. It excludes `.obsidian/`, unless `.obsidian/` is the only thing that changed. The size limit is a property of the payload, not of the staged diff.
 
-## Commit message style
+## Prompt
 
-Free prose, configured by the user, describing the language and the writing style of generated messages (for example `日本語` or `Português Brasileiro, presente do indicativo`). It governs wording only. The structural rules of the message are fixed by the plugin and take precedence.
+The instructions the user writes for the commit message: language, writing style, column limits, format — everything about the content of the message. Configured by the user and mandatory; with no prompt there is no commit. It is injected raw into the system prompt, after the output contract.
+
+## Output contract
+
+The one rule the plugin fixes and the user cannot edit: the model's response is the commit message and nothing else, with no code fences, no decorative quotation marks and no preamble. It is not style — it is the integration format between the model's response and `git commit -m`. It always precedes the prompt in the system prompt.
 
 ## Subject and body
 
-The two parts of a generated commit message. The subject is the first line. The body is optional, separated from the subject by a blank line, and describes why the change happened. Both are hard wrapped at 80 columns.
+The two parts of a generated commit message. The subject is the first line. The body is optional, separated from the subject by a blank line, and describes why the change happened. Their length and formatting are the user's choice, stated in the prompt.

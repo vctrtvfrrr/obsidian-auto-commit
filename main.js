@@ -26,7 +26,30 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian4 = require("obsidian");
 
 // src/settings.ts
-var DEFAULT_COMMIT_STYLE = "English (US), imperative mode";
+var EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+var SUPPORTED_MODELS = [
+  {
+    id: "claude-haiku-4-5",
+    label: "Claude Haiku 4.5 \u2014 fastest, cheapest",
+    supportsEffort: false,
+    supportsThinking: false
+  },
+  {
+    id: "claude-sonnet-5",
+    label: "Claude Sonnet 5 \u2014 better instruction following",
+    supportsEffort: true,
+    supportsThinking: true
+  },
+  {
+    id: "claude-opus-5",
+    label: "Claude Opus 5 \u2014 highest quality, most expensive",
+    supportsEffort: true,
+    supportsThinking: true
+  }
+];
+var DEFAULT_MODEL = SUPPORTED_MODELS[0].id;
+var DEFAULT_EFFORT = "low";
+var findModel = (id) => SUPPORTED_MODELS.find((m) => m.id === id);
 var DEFAULT_SETTINGS = {
   inactivityMinutes: 15,
   fetchIntervalMinutes: 5,
@@ -34,8 +57,27 @@ var DEFAULT_SETTINGS = {
   remote: "origin",
   pushEnabled: true,
   anthropicApiKey: "",
-  commitStyle: DEFAULT_COMMIT_STYLE
+  model: DEFAULT_MODEL,
+  effort: DEFAULT_EFFORT,
+  prompt: ""
 };
+var DEFAULT_PROMPT = 'Write the commit message in English (US), imperative mode.\n- No line anywhere in the message may exceed 80 characters.\n- A subject line. Aim for about 60 characters and never write up to the 80 character limit \u2014 a subject that fills the line is too long. When the detail does not fit, move it into the body instead of extending the subject.\n- An optional body, separated from the subject by a blank line, hard wrapped at 80 columns, with an unlimited number of lines. Omit the body when the change is trivial.\n- No conventional commit prefixes (no "feat:", "docs:", etc.).\n- Describe what changed concretely, citing files or areas when useful. Backticks around file and directory names are allowed.\n- If there are many heterogeneous changes, summarize the dominant theme.\n- When the diff contains only `.obsidian/` changes, describe them coarsely (theme, hotkeys, plugin configuration) in a subject line only, with no body.';
+function normalizeSettings(cfg) {
+  const normalized = { ...cfg };
+  if (!findModel(normalized.model)) {
+    console.warn(
+      `Auto-commit: unknown model "${normalized.model}", falling back to ${DEFAULT_MODEL}`
+    );
+    normalized.model = DEFAULT_MODEL;
+  }
+  if (!EFFORT_LEVELS.includes(normalized.effort)) {
+    console.warn(
+      `Auto-commit: unknown effort "${normalized.effort}", falling back to ${DEFAULT_EFFORT}`
+    );
+    normalized.effort = DEFAULT_EFFORT;
+  }
+  return normalized;
+}
 var rev = (s) => s.split("").reverse().join("");
 var toBase64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 var fromBase64 = (s) => {
@@ -65,6 +107,7 @@ var TOOLTIPS = {
   failedDetached: "The repository is in detached HEAD state. Check out a branch before auto-sync.",
   failedDiffTooLarge: "The diff exceeded the 200 KB limit. Review and commit manually.",
   failedAi: "Could not generate the commit message with AI. Changes remain staged.",
+  failedEmptyPrompt: "The commit message prompt is empty. Set it in the plugin settings to enable auto-commit.",
   failedRebaseConflict: "Conflict while updating from remote; rebase was aborted. Resolve manually.",
   failedPush: "Push failed after local commit. Check credentials, network, and remote permissions.",
   failedGitStatus: "Could not check repository status with Git. See the console for details.",
@@ -95,6 +138,13 @@ var SPECIAL_STATE_GUARDS = [
   [".git/REVERT_HEAD", "failedRevert"],
   [".git/BISECT_LOG", "failedBisect"]
 ];
+function checkPromptGuard(prompt) {
+  if (!prompt.trim()) {
+    console.info("Auto-commit: skipped \u2014 commit message prompt is empty");
+    return { ok: false, reason: "failedEmptyPrompt" };
+  }
+  return null;
+}
 async function checkRepoGuards(cwd) {
   for (const [f, reason] of SPECIAL_STATE_GUARDS) {
     if (fsExistsSync(pathJoin(cwd, f))) {
@@ -121,41 +171,49 @@ var import_obsidian2 = require("obsidian");
 
 // src/ai.ts
 var import_obsidian = require("obsidian");
-var STRUCTURAL_RULES = 'You generate commit messages for a vault in Obsidian. These structural rules are absolute and override any conflicting style instruction below:\n- No line anywhere in the message may exceed 80 characters.\n- A subject line. Aim for about 60 characters and never write up to the 80 character limit \u2014 a subject that fills the line is too long. When the detail does not fit, move it into the body instead of extending the subject.\n- An optional body, separated from the subject by a blank line, hard wrapped at 80 columns, with an unlimited number of lines. Omit the body when the change is trivial.\n- No conventional commit prefixes (no "feat:", "docs:", etc.).\n- Describe what changed concretely, citing files or areas when useful. Backticks around file and directory names are allowed.\n- If there are many heterogeneous changes, summarize the dominant theme.\n- When the diff contains only `.obsidian/` changes, describe them coarsely (theme, hotkeys, plugin configuration) in a subject line only, with no body.\n- Output the message alone: no code fences, no decorative quotation marks, no preamble such as "Message:".';
-async function callAnthropicApi(prompt, apiKey, commitStyle) {
+var OUTPUT_CONTRACT = 'Your entire response is the commit message and nothing else. No code fences, no decorative quotation marks, no preamble such as "Message:", no commentary before or after the message.';
+var MAX_TOKENS = 8192;
+async function callAnthropicApi(diff, ai) {
+  var _a, _b;
+  const model = (_a = findModel(ai.model)) != null ? _a : findModel(DEFAULT_MODEL);
+  const payload = {
+    model: model.id,
+    max_tokens: MAX_TOKENS,
+    system: OUTPUT_CONTRACT + "\n\n" + ai.prompt,
+    messages: [{ role: "user", content: diff }]
+  };
+  if (model.supportsEffort) payload.output_config = { effort: ai.effort };
+  if (model.supportsThinking) payload.thinking = { type: "adaptive" };
   const req = {
     url: "https://api.anthropic.com/v1/messages",
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": apiKey,
+      "x-api-key": ai.anthropicApiKey,
       "anthropic-version": "2023-06-01"
     },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      temperature: 0.2,
-      system: STRUCTURAL_RULES + "\n\nWrite the message in the following language and writing style:\n" + commitStyle,
-      messages: [{ role: "user", content: prompt }]
-    }),
+    body: JSON.stringify(payload),
     throw: false
   };
   const timeout = new Promise(
     (_, reject) => window.setTimeout(() => reject(new Error("timeout")), 6e4)
   );
-  console.debug("Auto-commit: calling Anthropic API");
+  console.debug(`Auto-commit: calling Anthropic API (${model.id})`);
   const res = await Promise.race([(0, import_obsidian.requestUrl)(req), timeout]);
   console.debug(`Auto-commit: Anthropic API responded with status ${res.status}`);
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
-  return res.json.content[0].text.trim();
+  const blocks = (_b = res.json) == null ? void 0 : _b.content;
+  const text = Array.isArray(blocks) ? blocks.find((b) => (b == null ? void 0 : b.type) === "text") : void 0;
+  if (typeof (text == null ? void 0 : text.text) !== "string") throw new Error("no text block in response");
+  return text.text.trim();
 }
-async function generateCommitMessage(diff, apiKey, commitStyle) {
-  return callAnthropicApi(diff, apiKey, commitStyle || DEFAULT_COMMIT_STYLE);
+async function generateCommitMessage(diff, ai) {
+  return callAnthropicApi(diff, ai);
 }
 
 // src/commit.ts
 var PAYLOAD_LIMIT = 2e5;
-async function createCommit(cwd, apiKey, commitStyle) {
+async function createCommit(cwd, ai) {
   let statusOut;
   try {
     const { stdout } = await execFileAsync("git", ["status", "--porcelain"], { cwd });
@@ -191,7 +249,7 @@ async function createCommit(cwd, apiKey, commitStyle) {
   let message;
   console.debug("Auto-commit: requesting commit message from AI");
   try {
-    message = await generateCommitMessage(payload, apiKey, commitStyle);
+    message = await generateCommitMessage(payload, ai);
     console.info(`Auto-commit: AI message \u2014 "${message}"`);
   } catch (err) {
     new import_obsidian2.Notice(
@@ -398,15 +456,21 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       this.isRunning = false;
     }
   }
+  aiConfig() {
+    return {
+      anthropicApiKey: this.settings.anthropicApiKey,
+      prompt: this.settings.prompt,
+      model: this.settings.model,
+      effort: this.settings.effort
+    };
+  }
   async doCommit() {
     const cwd = this.getVaultPath();
+    const promptResult = checkPromptGuard(this.settings.prompt);
+    if (promptResult !== null) return promptResult;
     const guardResult = await checkRepoGuards(cwd);
     if (guardResult !== null) return guardResult;
-    const commitResult = await createCommit(
-      cwd,
-      this.settings.anthropicApiKey,
-      this.settings.commitStyle
-    );
+    const commitResult = await createCommit(cwd, this.aiConfig());
     if (commitResult !== null) return commitResult;
     if (!this.settings.pushEnabled) {
       console.info("Auto-commit: push disabled, skipping remote sync");
@@ -506,7 +570,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
     }
     if (raw.d) {
       try {
-        this.settings = { ...DEFAULT_SETTINGS, ...deobfuscate(raw.d) };
+        this.settings = normalizeSettings({ ...DEFAULT_SETTINGS, ...deobfuscate(raw.d) });
         return;
       } catch (e) {
         console.warn("Auto-commit: failed to deserialize settings, using defaults");
@@ -515,7 +579,7 @@ var AutoCommitPlugin = class extends import_obsidian4.Plugin {
       }
     }
     console.info("Auto-commit: migrating settings from legacy format");
-    this.settings = { ...DEFAULT_SETTINGS, ...raw };
+    this.settings = normalizeSettings({ ...DEFAULT_SETTINGS, ...raw });
     await this.saveSettings();
   }
   async saveSettings() {
@@ -565,14 +629,33 @@ var AutoCommitSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Commit message style").setDesc(
-      "Language and writing style for generated commit messages. Free prose \u2014 leave empty to fall back to the default."
-    ).addText(
-      (text) => text.setPlaceholder(DEFAULT_COMMIT_STYLE).setValue(this.plugin.settings.commitStyle).onChange(async (value) => {
-        this.plugin.settings.commitStyle = value.trim();
+    const model = findModel(this.plugin.settings.model);
+    new import_obsidian4.Setting(containerEl).setName("Model").setDesc("Anthropic model used to write commit messages.").addDropdown((dropdown) => {
+      for (const m of SUPPORTED_MODELS) dropdown.addOption(m.id, m.label);
+      dropdown.setValue(this.plugin.settings.model).onChange(async (value) => {
+        this.plugin.settings.model = value;
         await this.plugin.saveSettings();
-      })
-    );
+        this.display();
+      });
+    });
+    new import_obsidian4.Setting(containerEl).setName("Effort").setDesc(
+      (model == null ? void 0 : model.supportsEffort) ? "How much the model reasons before writing the message." : "Not available on the selected model. Choose Sonnet 5 or Opus 5 to enable it."
+    ).addDropdown((dropdown) => {
+      for (const level of EFFORT_LEVELS) dropdown.addOption(level, level);
+      dropdown.setValue(this.plugin.settings.effort).setDisabled(!(model == null ? void 0 : model.supportsEffort)).onChange(async (value) => {
+        this.plugin.settings.effort = value;
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(containerEl).setName("Prompt").setDesc(
+      "Full instructions for the commit message \u2014 language, style, columns, format. Required: with no prompt there is no commit."
+    ).addTextArea((text) => {
+      text.inputEl.rows = 12;
+      text.setPlaceholder(DEFAULT_PROMPT).setValue(this.plugin.settings.prompt).onChange(async (value) => {
+        this.plugin.settings.prompt = value.trim();
+        await this.plugin.saveSettings();
+      });
+    });
     new import_obsidian4.Setting(containerEl).setName("Anthropic API key").setDesc("Used to generate commit messages via Claude.").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("sk-ant-...").setValue(this.plugin.settings.anthropicApiKey).onChange(async (value) => {

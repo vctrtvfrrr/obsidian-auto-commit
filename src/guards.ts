@@ -8,6 +8,19 @@ const SPECIAL_STATE_GUARDS: [string, TooltipKey][] = [
   [".git/BISECT_LOG", "failedBisect"],
 ];
 
+// Runs before any command that changes state — in particular before `git add -A` —
+// so an empty prompt never leaves the vault staged. Kept out of `checkRepoGuards`
+// because that one also gates the fetch cycle, which needs no prompt.
+export function checkPromptGuard(
+  prompt: string
+): { ok: false; reason: TooltipKey } | null {
+  if (!prompt.trim()) {
+    console.info("Auto-commit: skipped — commit message prompt is empty");
+    return { ok: false, reason: "failedEmptyPrompt" };
+  }
+  return null;
+}
+
 export async function checkRepoGuards(
   cwd: string
 ): Promise<{ ok: false; reason: TooltipKey } | null> {
